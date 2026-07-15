@@ -93,3 +93,42 @@ endfunction
 function! vim_ai_autocomplete#CurrentSuggestion() abort
   return copy(s:current_suggestion)
 endfunction
+
+let s:tab_fallback_rhs = '"\<Tab>"'
+let s:tab_fallback_is_expr = 1
+
+function! vim_ai_autocomplete#SetupTabWrap() abort
+  let original_map = maparg('<Tab>', 'i', 0, 1)
+  if !empty(original_map)
+    let s:tab_fallback_rhs = original_map.rhs
+    let s:tab_fallback_is_expr = get(original_map, 'expr', 0)
+  endif
+  inoremap <script><silent><expr> <Tab> vim_ai_autocomplete#TabHandler()
+endfunction
+
+function! vim_ai_autocomplete#TabHandler() abort
+  if vim_ai_autocomplete#IsVisible()
+    return vim_ai_autocomplete#Accept()
+  endif
+  return s:tab_fallback_is_expr ? eval(s:tab_fallback_rhs) : s:tab_fallback_rhs
+endfunction
+
+function! vim_ai_autocomplete#Accept() abort
+  let lines = vim_ai_autocomplete#CurrentSuggestion()
+  call vim_ai_autocomplete#ClearSuggestion()
+  if empty(lines)
+    return ''
+  endif
+  return join(lines, "\<CR>")
+endfunction
+
+function! vim_ai_autocomplete#SetupProviderToggle(has_gemini, has_claude) abort
+  if a:has_gemini && a:has_claude
+    nnoremap <silent> <leader>ap :call vim_ai_autocomplete#ToggleProvider()<CR>
+  endif
+endfunction
+
+function! vim_ai_autocomplete#ToggleProvider() abort
+  let g:vim_ai_autocomplete_provider = g:vim_ai_autocomplete_provider ==# 'gemini' ? 'claude' : 'gemini'
+  echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
+endfunction
