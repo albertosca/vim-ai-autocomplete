@@ -52,3 +52,44 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   let text = data.content[0].text
   return split(text, "\n", 1)
 endfunction
+
+let s:prop_type = 'VimAiAutocompleteSuggestion'
+let s:current_suggestion = []
+let s:suggestion_lnum = 0
+
+function! s:EnsurePropType() abort
+  if empty(prop_type_get(s:prop_type))
+    call prop_type_add(s:prop_type, {'highlight': 'Comment'})
+  endif
+endfunction
+
+function! vim_ai_autocomplete#ShowSuggestion(lines) abort
+  call vim_ai_autocomplete#ClearSuggestion()
+  if empty(a:lines)
+    return
+  endif
+  call s:EnsurePropType()
+  call prop_add(line('.'), col('.'), {'type': s:prop_type, 'text': a:lines[0]})
+  for l in a:lines[1:]
+    call prop_add(line('.'), 0, {'type': s:prop_type, 'text_align': 'below', 'text': l})
+  endfor
+  let s:current_suggestion = copy(a:lines)
+  let s:suggestion_lnum = line('.')
+endfunction
+
+function! vim_ai_autocomplete#ClearSuggestion() abort
+  if empty(s:current_suggestion)
+    return
+  endif
+  call prop_remove({'type': s:prop_type, 'all': v:true}, s:suggestion_lnum)
+  let s:current_suggestion = []
+  let s:suggestion_lnum = 0
+endfunction
+
+function! vim_ai_autocomplete#IsVisible() abort
+  return !empty(s:current_suggestion)
+endfunction
+
+function! vim_ai_autocomplete#CurrentSuggestion() abort
+  return copy(s:current_suggestion)
+endfunction
