@@ -36,7 +36,11 @@ function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
 endfunction
 
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
-  let data = json_decode(a:body)
+  try
+    let data = json_decode(a:body)
+  catch
+    return []
+  endtry
   if type(data) != v:t_dict || !has_key(data, 'candidates') || empty(data.candidates)
     return []
   endif
@@ -45,7 +49,11 @@ function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
 endfunction
 
 function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
-  let data = json_decode(a:body)
+  try
+    let data = json_decode(a:body)
+  catch
+    return []
+  endtry
   if type(data) != v:t_dict || !has_key(data, 'content') || empty(data.content)
     return []
   endif
@@ -134,11 +142,7 @@ function! vim_ai_autocomplete#ToggleProvider() abort
 endfunction
 
 let s:timer_id = -1
-let s:response_chunks = []
-let s:pending_provider = ''
-let s:pending_bufnr = -1
-let s:pending_lnum = 0
-let s:pending_col = 0
+let s:gen = 0
 
 function! vim_ai_autocomplete#Trigger() abort
   if s:timer_id != -1
@@ -159,7 +163,7 @@ endfunction
 function! vim_ai_autocomplete#RequestCompletion() abort
   let has_gemini = !empty($GEMINI_API_KEY)
   let has_claude = !empty($ANTHROPIC_API_KEY)
-  let [default_provider, level, message] = vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude)
+  let [default_provider, level, _] = vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude)
   if level ==# 'error'
     return
   endif
@@ -183,33 +187,35 @@ function! vim_ai_autocomplete#RequestCompletion() abort
           \ '-H', 'Content-Type: application/json', '-d', body]
   endif
 
-  let s:response_chunks = []
-  let s:pending_provider = provider
-  let s:pending_bufnr = bufnr('%')
-  let s:pending_lnum = line('.')
-  let s:pending_col = col('.')
+  let s:gen += 1
+  let l:gen = s:gen
+  let l:chunks = []
+  let l:bufnr = bufnr('%')
+  let l:lnum = line('.')
+  let l:col = col('.')
+  let l:provider = provider
   call job_start(cmd, {
-        \ 'out_cb': function('s:OnOut'),
-        \ 'exit_cb': function('s:OnExit'),
+        \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
+        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:bufnr, l:lnum, l:col)},
         \ 'out_mode': 'raw',
         \ })
 endfunction
 
-function! s:OnOut(channel, msg) abort
-  call add(s:response_chunks, a:msg)
-endfunction
-
-function! s:OnExit(job, status) abort
+function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col) abort
+  if a:gen != s:gen
+    " uma requisicao mais nova ja superou esta -- descarta
+    return
+  endif
   if a:status != 0
     return
   endif
   " descarta se o cursor ja se moveu desde que o request foi feito
   " (resposta chegou tarde demais, contexto mudou)
-  if bufnr('%') != s:pending_bufnr || line('.') != s:pending_lnum || col('.') != s:pending_col
+  if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
     return
   endif
-  let body = join(s:response_chunks, '')
-  let lines = s:pending_provider ==# 'gemini'
+  let body = join(a:chunks, '')
+  let lines = a:provider ==# 'gemini'
         \ ? vim_ai_autocomplete#ParseGeminiResponse(body)
         \ : vim_ai_autocomplete#ParseClaudeResponse(body)
   if !empty(lines)
