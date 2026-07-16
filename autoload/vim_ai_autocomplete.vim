@@ -47,6 +47,17 @@ function! vim_ai_autocomplete#BuildClaudeCommand(context, model, has_ant_authent
   endif
 endfunction
 
+function! vim_ai_autocomplete#RunWithoutAnthropicKey(Fn) abort
+  let had_key = exists('$ANTHROPIC_API_KEY')
+  let saved = had_key ? $ANTHROPIC_API_KEY : ''
+  unlet $ANTHROPIC_API_KEY
+  let result = a:Fn()
+  if had_key
+    let $ANTHROPIC_API_KEY = saved
+  endif
+  return result
+endfunction
+
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   try
     let data = json_decode(a:body)
