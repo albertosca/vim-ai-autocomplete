@@ -35,6 +35,18 @@ function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
   return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
 endfunction
 
+function! vim_ai_autocomplete#BuildClaudeCommand(context, model, has_ant_authenticated, api_key) abort
+  let body = vim_ai_autocomplete#BuildClaudeRequest(a:context, a:model)
+  if a:has_ant_authenticated
+    return {'cmd': ['ant', 'messages', 'create', '--model', a:model, '--max-tokens', '256', '--format', 'json'], 'stdin': body}
+  else
+    return {'cmd': ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
+          \ '-H', 'x-api-key: ' . a:api_key,
+          \ '-H', 'anthropic-version: 2023-06-01',
+          \ '-H', 'Content-Type: application/json', '-d', body], 'stdin': ''}
+  endif
+endfunction
+
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   try
     let data = json_decode(a:body)
