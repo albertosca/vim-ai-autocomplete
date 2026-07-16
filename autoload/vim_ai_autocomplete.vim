@@ -51,10 +51,13 @@ function! vim_ai_autocomplete#RunWithoutAnthropicKey(Fn) abort
   let had_key = exists('$ANTHROPIC_API_KEY')
   let saved = had_key ? $ANTHROPIC_API_KEY : ''
   unlet $ANTHROPIC_API_KEY
-  let result = a:Fn()
-  if had_key
-    let $ANTHROPIC_API_KEY = saved
-  endif
+  try
+    let result = a:Fn()
+  finally
+    if had_key
+      let $ANTHROPIC_API_KEY = saved
+    endif
+  endtry
   return result
 endfunction
 
