@@ -132,3 +132,87 @@ function! vim_ai_autocomplete#ToggleProvider() abort
   let g:vim_ai_autocomplete_provider = g:vim_ai_autocomplete_provider ==# 'gemini' ? 'claude' : 'gemini'
   echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
 endfunction
+
+let s:timer_id = -1
+let s:response_chunks = []
+let s:pending_provider = ''
+let s:pending_bufnr = -1
+let s:pending_lnum = 0
+let s:pending_col = 0
+
+function! vim_ai_autocomplete#Trigger() abort
+  if s:timer_id != -1
+    call timer_stop(s:timer_id)
+  endif
+  let s:timer_id = timer_start(600, function('vim_ai_autocomplete#OnTimer'))
+endfunction
+
+function! vim_ai_autocomplete#OnTimer(timer_id) abort
+  let s:timer_id = -1
+  call vim_ai_autocomplete#ClearSuggestion()
+  if mode() !=# 'i'
+    return
+  endif
+  call vim_ai_autocomplete#RequestCompletion()
+endfunction
+
+function! vim_ai_autocomplete#RequestCompletion() abort
+  let has_gemini = !empty($GEMINI_API_KEY)
+  let has_claude = !empty($ANTHROPIC_API_KEY)
+  let [default_provider, level, message] = vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude)
+  if level ==# 'error'
+    return
+  endif
+  let provider = get(g:, 'vim_ai_autocomplete_provider', default_provider)
+
+  let first = max([1, line('.') - 100])
+  let last = min([line('$'), line('.') + 20])
+  let lines_before = getline(first, line('.'))
+  let lines_after = getline(line('.'), last)
+  let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
+
+  if provider ==# 'gemini'
+    let body = vim_ai_autocomplete#BuildGeminiRequest(context)
+    let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=' . $GEMINI_API_KEY
+    let cmd = ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
+  else
+    let body = vim_ai_autocomplete#BuildClaudeRequest(context, 'claude-sonnet-4-5-20250929')
+    let cmd = ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
+          \ '-H', 'x-api-key: ' . $ANTHROPIC_API_KEY,
+          \ '-H', 'anthropic-version: 2023-06-01',
+          \ '-H', 'Content-Type: application/json', '-d', body]
+  endif
+
+  let s:response_chunks = []
+  let s:pending_provider = provider
+  let s:pending_bufnr = bufnr('%')
+  let s:pending_lnum = line('.')
+  let s:pending_col = col('.')
+  call job_start(cmd, {
+        \ 'out_cb': function('s:OnOut'),
+        \ 'exit_cb': function('s:OnExit'),
+        \ 'out_mode': 'raw',
+        \ })
+endfunction
+
+function! s:OnOut(channel, msg) abort
+  call add(s:response_chunks, a:msg)
+endfunction
+
+function! s:OnExit(job, status) abort
+  if a:status != 0
+    return
+  endif
+  " descarta se o cursor ja se moveu desde que o request foi feito
+  " (resposta chegou tarde demais, contexto mudou)
+  if bufnr('%') != s:pending_bufnr || line('.') != s:pending_lnum || col('.') != s:pending_col
+    return
+  endif
+  let body = join(s:response_chunks, '')
+  let lines = s:pending_provider ==# 'gemini'
+        \ ? vim_ai_autocomplete#ParseGeminiResponse(body)
+        \ : vim_ai_autocomplete#ParseClaudeResponse(body)
+  if !empty(lines)
+    call vim_ai_autocomplete#ShowSuggestion(lines)
+  endif
+endfunction
