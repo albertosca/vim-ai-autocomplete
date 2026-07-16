@@ -61,6 +61,35 @@ function! vim_ai_autocomplete#RunWithoutAnthropicKey(Fn) abort
   return result
 endfunction
 
+let s:ant_authenticated = 0
+
+function! vim_ai_autocomplete#CheckAntAuth() abort
+  if !executable('ant')
+    return
+  endif
+  call vim_ai_autocomplete#RunWithoutAnthropicKey({-> s:StartAntAuthCheckJob()})
+endfunction
+
+function! s:StartAntAuthCheckJob() abort
+  let job = job_start(['ant', 'messages', 'create', '--model', 'claude-sonnet-4-5-20250929', '--max-tokens', '1', '--format', 'json'], {
+        \ 'in_io': 'pipe',
+        \ 'exit_cb': function('s:OnAntAuthCheckExit'),
+        \ 'out_mode': 'raw',
+        \ })
+  call ch_sendraw(job_getchannel(job), '{"model":"claude-sonnet-4-5-20250929","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+  call ch_close_in(job_getchannel(job))
+  return job
+endfunction
+
+function! s:OnAntAuthCheckExit(job, status) abort
+  let s:ant_authenticated = (a:status == 0)
+  if s:ant_authenticated
+    call vim_ai_autocomplete#SetupProviderToggle(!empty($GEMINI_API_KEY), 1)
+  else
+    echomsg 'vim-ai-autocomplete: ant instalado mas nao autenticado -- rode "ant auth login" pra usar credito da assinatura Claude'
+  endif
+endfunction
+
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   try
     let data = json_decode(a:body)
