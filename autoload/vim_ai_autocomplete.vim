@@ -176,6 +176,26 @@ function! vim_ai_autocomplete#TabHandler() abort
   return s:tab_fallback_is_expr ? eval(s:tab_fallback_rhs) : s:tab_fallback_rhs
 endfunction
 
+let s:esc_fallback_rhs = '"\<Esc>"'
+let s:esc_fallback_is_expr = 1
+
+function! vim_ai_autocomplete#SetupEscWrap() abort
+  let original_map = maparg('<Esc>', 'i', 0, 1)
+  if !empty(original_map)
+    let s:esc_fallback_rhs = original_map.rhs
+    let s:esc_fallback_is_expr = get(original_map, 'expr', 0)
+  endif
+  inoremap <script><silent><expr> <Esc> vim_ai_autocomplete#EscHandler()
+endfunction
+
+function! vim_ai_autocomplete#EscHandler() abort
+  if vim_ai_autocomplete#IsVisible()
+    call vim_ai_autocomplete#ClearSuggestion()
+    return ''
+  endif
+  return s:esc_fallback_is_expr ? eval(s:esc_fallback_rhs) : s:esc_fallback_rhs
+endfunction
+
 function! vim_ai_autocomplete#Accept() abort
   let lines = vim_ai_autocomplete#CurrentSuggestion()
   call vim_ai_autocomplete#ClearSuggestion()

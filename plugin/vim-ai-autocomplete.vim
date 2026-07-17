@@ -14,6 +14,7 @@ let g:vim_ai_autocomplete_provider = get(g:, 'vim_ai_autocomplete_provider', 'ge
 augroup vim_ai_autocomplete
   autocmd!
   autocmd VimEnter * call vim_ai_autocomplete#SetupTabWrap()
+        \ | call vim_ai_autocomplete#SetupEscWrap()
         \ | call vim_ai_autocomplete#SetupProviderToggle(!empty($GEMINI_API_KEY), !empty($ANTHROPIC_API_KEY))
         \ | call vim_ai_autocomplete#CheckAntAuth()
   autocmd CursorMovedI * call vim_ai_autocomplete#Trigger()
