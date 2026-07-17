@@ -217,7 +217,7 @@ endfunction
 
 function! vim_ai_autocomplete#RequestCompletion() abort
   let has_gemini = !empty($GEMINI_API_KEY)
-  let has_claude = !empty($ANTHROPIC_API_KEY)
+  let has_claude = s:ant_authenticated || !empty($ANTHROPIC_API_KEY)
   let [default_provider, level, _] = vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude)
   if level ==# 'error'
     return
@@ -230,16 +230,15 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let lines_after = getline(line('.'), last)
   let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
 
+  let stdin_body = ''
   if provider ==# 'gemini'
     let body = vim_ai_autocomplete#BuildGeminiRequest(context)
     let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=' . $GEMINI_API_KEY
     let cmd = ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
   else
-    let body = vim_ai_autocomplete#BuildClaudeRequest(context, 'claude-sonnet-4-5-20250929')
-    let cmd = ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
-          \ '-H', 'x-api-key: ' . $ANTHROPIC_API_KEY,
-          \ '-H', 'anthropic-version: 2023-06-01',
-          \ '-H', 'Content-Type: application/json', '-d', body]
+    let cmd_info = vim_ai_autocomplete#BuildClaudeCommand(context, 'claude-sonnet-4-5-20250929', s:ant_authenticated, $ANTHROPIC_API_KEY)
+    let cmd = cmd_info.cmd
+    let stdin_body = cmd_info.stdin
   endif
 
   let s:gen += 1
@@ -249,11 +248,21 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let l:lnum = line('.')
   let l:col = col('.')
   let l:provider = provider
-  call job_start(cmd, {
+
+  let opts = {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
         \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:bufnr, l:lnum, l:col)},
         \ 'out_mode': 'raw',
-        \ })
+        \ }
+
+  if !empty(stdin_body)
+    let opts.in_io = 'pipe'
+    let job = vim_ai_autocomplete#RunWithoutAnthropicKey({-> job_start(cmd, opts)})
+    call ch_sendraw(job_getchannel(job), stdin_body)
+    call ch_close_in(job_getchannel(job))
+  else
+    call job_start(cmd, opts)
+  endif
 endfunction
 
 function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col) abort
