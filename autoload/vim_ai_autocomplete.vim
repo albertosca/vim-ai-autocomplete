@@ -62,6 +62,7 @@ function! vim_ai_autocomplete#RunWithoutAnthropicKey(Fn) abort
 endfunction
 
 let s:ant_authenticated = 0
+let s:ant_auth_job = v:null
 
 function! vim_ai_autocomplete#CheckAntAuth() abort
   if !executable('ant')
@@ -71,14 +72,13 @@ function! vim_ai_autocomplete#CheckAntAuth() abort
 endfunction
 
 function! s:StartAntAuthCheckJob() abort
-  let job = job_start(['ant', 'messages', 'create', '--model', 'claude-sonnet-4-5-20250929', '--max-tokens', '1', '--format', 'json'], {
-        \ 'in_io': 'pipe',
+  let s:ant_auth_job = job_start(['ant', 'messages', 'create', '--model', 'claude-sonnet-4-5-20250929', '--max-tokens', '1', '--format', 'json'], {
         \ 'exit_cb': function('s:OnAntAuthCheckExit'),
         \ 'out_mode': 'raw',
         \ })
-  call ch_sendraw(job_getchannel(job), '{"model":"claude-sonnet-4-5-20250929","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
-  call ch_close_in(job_getchannel(job))
-  return job
+  call ch_sendraw(job_getchannel(s:ant_auth_job), '{"model":"claude-sonnet-4-5-20250929","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+  call ch_close_in(job_getchannel(s:ant_auth_job))
+  return s:ant_auth_job
 endfunction
 
 function! s:OnAntAuthCheckExit(job, status) abort
