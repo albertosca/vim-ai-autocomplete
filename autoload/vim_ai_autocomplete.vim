@@ -267,7 +267,11 @@ endfunction
 
 function! vim_ai_autocomplete#SetupProviderToggle(has_gemini, has_claude) abort
   if a:has_gemini && a:has_claude
-    nnoremap <silent> <leader>ap :call vim_ai_autocomplete#ToggleProvider()<CR>
+    " <leader>pv, nao <leader>ap: <leader>a ja e mapeado (code actions do CoC,
+    " configs.vim) -- <leader>ap compartilhava prefixo com um mapeamento
+    " completo existente, exigindo digitar rapido o suficiente pro timeoutlen
+    " nao resolver so <leader>a sozinho (achado real, reportado pelo Alberto).
+    nnoremap <silent> <leader>pv :call vim_ai_autocomplete#ToggleProvider()<CR>
   endif
 endfunction
 
