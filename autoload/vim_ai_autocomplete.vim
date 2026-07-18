@@ -253,7 +253,7 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let stdin_body = ''
   if provider ==# 'gemini'
     let body = vim_ai_autocomplete#BuildGeminiRequest(context)
-    let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=' . $GEMINI_API_KEY
+    let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' . $GEMINI_API_KEY
     let cmd = ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
   else
     let cmd_info = vim_ai_autocomplete#BuildClaudeCommand(context, 'claude-sonnet-4-5-20250929', s:ant_authenticated, $ANTHROPIC_API_KEY)
