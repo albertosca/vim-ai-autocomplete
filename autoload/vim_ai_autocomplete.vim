@@ -131,6 +131,7 @@ function! vim_ai_autocomplete#ShowSuggestion(lines) abort
   if empty(a:lines)
     return
   endif
+  echom '[DEBUG ShowSuggestion] mostrando: ' . string(a:lines)
   call s:EnsurePropType()
   call prop_add(line('.'), col('.'), {'type': s:prop_type, 'text': a:lines[0]})
   for l in a:lines[1:]
@@ -189,6 +190,7 @@ function! vim_ai_autocomplete#SetupEscWrap() abort
 endfunction
 
 function! vim_ai_autocomplete#EscHandler() abort
+  echom '[DEBUG EscHandler] chamado, IsVisible=' . vim_ai_autocomplete#IsVisible() . ' suggestion=' . string(s:current_suggestion)
   if vim_ai_autocomplete#IsVisible()
     call vim_ai_autocomplete#ClearSuggestion()
     return ''
@@ -253,7 +255,7 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let stdin_body = ''
   if provider ==# 'gemini'
     let body = vim_ai_autocomplete#BuildGeminiRequest(context)
-    let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' . $GEMINI_API_KEY
+    let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=' . $GEMINI_API_KEY
     let cmd = ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
   else
     let cmd_info = vim_ai_autocomplete#BuildClaudeCommand(context, 'claude-sonnet-4-5-20250929', s:ant_authenticated, $ANTHROPIC_API_KEY)
@@ -286,22 +288,27 @@ function! vim_ai_autocomplete#RequestCompletion() abort
 endfunction
 
 function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col) abort
+  echom '[DEBUG OnExit] gen=' . a:gen . '/' . s:gen . ' status=' . a:status . ' provider=' . a:provider . ' buf=' . a:bufnr . '/' . bufnr('%') . ' pos=' . a:lnum . ',' . a:col . '/' . line('.') . ',' . col('.')
   if a:gen != s:gen
-    " uma requisicao mais nova ja superou esta -- descarta
+    echom '[DEBUG OnExit] descartado: gen'
     return
   endif
   if a:status != 0
+    echom '[DEBUG OnExit] descartado: status'
     return
   endif
   " descarta se o cursor ja se moveu desde que o request foi feito
   " (resposta chegou tarde demais, contexto mudou)
   if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
+    echom '[DEBUG OnExit] descartado: cursor moveu'
     return
   endif
   let body = join(a:chunks, '')
+  echom '[DEBUG OnExit] body(200)=' . strpart(body, 0, 200)
   let lines = a:provider ==# 'gemini'
         \ ? vim_ai_autocomplete#ParseGeminiResponse(body)
         \ : vim_ai_autocomplete#ParseClaudeResponse(body)
+  echom '[DEBUG OnExit] lines=' . string(lines)
   if !empty(lines)
     call vim_ai_autocomplete#ShowSuggestion(lines)
   endif
