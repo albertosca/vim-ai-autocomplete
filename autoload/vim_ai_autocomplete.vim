@@ -116,6 +116,34 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   return split(text, "\n", 1)
 endfunction
 
+" Alguns modelos (confirmado com gemini-3.1-flash-lite, reproduzivel 3/3
+" chamadas reais) tratam a resposta como continuacao literal de bytes: se o
+" contexto termina em ":" (abertura de bloco Python), a primeira linha da
+" sugestao vem sem quebra de linha E sem indentacao propria -- o texto gruda
+" direto na linha atual (ex: "def fibonacci(n):if n <= 1:"). Pedir pro
+" modelo incluir a quebra de linha via instrucao no prompt NAO resolveu
+" (testado, mesmo comportamento). Fix: quando o contexto termina em ":" e a
+" filetype e python, insere uma quebra de linha e um nivel de indentacao
+" (shiftwidth) na primeira linha da sugestao -- as linhas seguintes ja vem
+" com indentacao relativa correta do proprio modelo, so a primeira precisa
+" desse ajuste.
+function! vim_ai_autocomplete#AdjustSuggestionLines(lines, current_line_before_cursor, filetype, shiftwidth, expandtab) abort
+  if empty(a:lines) || a:filetype !=# 'python'
+    return a:lines
+  endif
+  let trimmed = substitute(a:current_line_before_cursor, '\s*$', '', '')
+  if trimmed !~# ':$'
+    return a:lines
+  endif
+  if a:lines[0] ==# ''
+    " ja veio com quebra de linha propria -- nao mexe
+    return a:lines
+  endif
+  let indent_str = a:expandtab ? repeat(' ', a:shiftwidth) : "\t"
+  let first_line_stripped = substitute(a:lines[0], '^\s*', '', '')
+  return [''] + [indent_str . first_line_stripped] + a:lines[1:]
+endfunction
+
 let s:prop_type = 'VimAiAutocompleteSuggestion'
 let s:current_suggestion = []
 let s:suggestion_lnum = 0
@@ -334,6 +362,9 @@ function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col) abort
         \ ? vim_ai_autocomplete#ParseGeminiResponse(body)
         \ : vim_ai_autocomplete#ParseClaudeResponse(body)
   if !empty(lines)
+    let current_line = getline(a:lnum)
+    let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
+    let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
     call vim_ai_autocomplete#ShowSuggestion(lines)
   endif
 endfunction
