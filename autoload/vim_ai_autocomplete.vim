@@ -190,7 +190,6 @@ function! vim_ai_autocomplete#SetupEscWrap() abort
 endfunction
 
 function! vim_ai_autocomplete#EscHandler() abort
-  echom '[DEBUG EscHandler] chamado, IsVisible=' . vim_ai_autocomplete#IsVisible() . ' suggestion=' . string(s:current_suggestion)
   if vim_ai_autocomplete#IsVisible()
     call vim_ai_autocomplete#ClearSuggestion()
     return ''
@@ -204,7 +203,39 @@ function! vim_ai_autocomplete#Accept() abort
   if empty(lines)
     return ''
   endif
-  return join(lines, "\<CR>")
+  " Insere direto no buffer via setline()/append() em vez de "digitar" via
+  " <CR> simulado -- digitar <CR> dispara o autoindent/indentexpr real do
+  " Vim a cada linha, que soma em cima da indentacao que o texto da API ja
+  " trouxe, dobrando/desalinhando a indentacao real (achado via debug real
+  " com o Gemini: linha esperada com 8 espacos virava 12, outra virava 24).
+  "
+  " A mutacao do buffer precisa ser ADIADA via timer_start(0, ...): um
+  " mapeamento <expr> (como o <Tab> que chama esta funcao) NAO pode mudar o
+  " texto do buffer durante sua propria avaliacao -- fazer isso direto aqui
+  " dispara E565 (confirmado rodando de verdade contra o mapeamento real de
+  " <Tab>, nao só via :call). timer_start com delay 0 roda o callback assim
+  " que o Vim volta pro loop de eventos, ja fora da avaliacao do <expr>.
+  let lnum = line('.')
+  let col = col('.')
+  call timer_start(0, {-> vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col)})
+  return ''
+endfunction
+
+function! vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col) abort
+  let current_line = getline(a:lnum)
+  let before = a:col > 1 ? current_line[: a:col - 2] : ''
+  let after = current_line[a:col - 1 :]
+  let new_first_line = before . a:lines[0]
+  if len(a:lines) == 1
+    call setline(a:lnum, new_first_line . after)
+    call cursor(a:lnum, len(new_first_line) + 1)
+  else
+    let middle_lines = a:lines[1:]
+    let middle_lines[-1] .= after
+    call setline(a:lnum, new_first_line)
+    call append(a:lnum, middle_lines)
+    call cursor(a:lnum + len(middle_lines), len(middle_lines[-1]) - len(after) + 1)
+  endif
 endfunction
 
 function! vim_ai_autocomplete#SetupProviderToggle(has_gemini, has_claude) abort
