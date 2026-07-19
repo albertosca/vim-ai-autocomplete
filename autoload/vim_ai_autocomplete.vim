@@ -6,7 +6,7 @@ function! vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude) abort
     return ['gemini', v:null, v:null]
   endif
   let provider = a:has_gemini ? 'gemini' : 'claude'
-  let message = printf('só %s disponível (falta a outra API key) -- toggle ,ap desabilitado', provider)
+  let message = printf('só %s disponível (falta a outra API key) -- toggle ,pr desabilitado', provider)
   return [provider, 'warn', message]
 endfunction
 
@@ -63,6 +63,7 @@ endfunction
 
 let s:ant_authenticated = 0
 let s:ant_auth_job = v:null
+let s:ant_auth_output = []
 
 function! vim_ai_autocomplete#CheckAntAuth() abort
   if !executable('ant')
@@ -72,8 +73,10 @@ function! vim_ai_autocomplete#CheckAntAuth() abort
 endfunction
 
 function! s:StartAntAuthCheckJob() abort
+  let s:ant_auth_output = []
   let s:ant_auth_job = job_start(['ant', 'messages', 'create', '--model', 'claude-sonnet-4-5-20250929', '--max-tokens', '1', '--format', 'json'], {
         \ 'exit_cb': function('s:OnAntAuthCheckExit'),
+        \ 'out_cb': {ch, msg -> add(s:ant_auth_output, msg)},
         \ 'out_mode': 'raw',
         \ })
   call ch_sendraw(job_getchannel(s:ant_auth_job), '{"model":"claude-sonnet-4-5-20250929","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
@@ -81,12 +84,35 @@ function! s:StartAntAuthCheckJob() abort
   return s:ant_auth_job
 endfunction
 
+" Distingue login ausente de outras falhas (ex: credito de API esgotado) --
+" antes disparava a mesma mensagem "nao autenticado" pra qualquer status !=
+" 0, o que e enganoso quando o ant JA esta logado mas a chamada falhou por
+" outro motivo (achado real: "Your credit balance is too low", que nao tem
+" nada a ver com login).
+function! vim_ai_autocomplete#DescribeAntAuthFailure(raw_output) abort
+  let message = ''
+  try
+    let data = json_decode(a:raw_output)
+    if type(data) == v:t_dict
+      let message = get(get(data, 'error', {}), 'message', '')
+    endif
+  catch
+  endtry
+  if message =~? 'credit balance\|purchase credits\|billing'
+    return 'vim-ai-autocomplete: ant autenticado, mas sem credito de API (' . message . ') -- ver console.anthropic.com > Plans & Billing'
+  elseif empty(message) || message =~? 'authenticat\|unauthorized\|invalid.*api.*key\|not logged\|please run'
+    return 'vim-ai-autocomplete: ant instalado mas nao autenticado -- rode "ant auth login" pra usar credito da assinatura Claude'
+  else
+    return 'vim-ai-autocomplete: ant messages create falhou -- ' . message
+  endif
+endfunction
+
 function! s:OnAntAuthCheckExit(job, status) abort
   let s:ant_authenticated = (a:status == 0)
   if s:ant_authenticated
     call vim_ai_autocomplete#SetupProviderToggle(!empty($GEMINI_API_KEY), 1)
   else
-    echomsg 'vim-ai-autocomplete: ant instalado mas nao autenticado -- rode "ant auth login" pra usar credito da assinatura Claude'
+    echomsg vim_ai_autocomplete#DescribeAntAuthFailure(join(s:ant_auth_output, ''))
   endif
 endfunction
 
@@ -191,8 +217,15 @@ let s:tab_fallback_is_expr = 1
 function! vim_ai_autocomplete#SetupTabWrap() abort
   let original_map = maparg('<Tab>', 'i', 0, 1)
   if !empty(original_map)
-    let s:tab_fallback_rhs = original_map.rhs
+    " Mapeamentos <Tab> baseados em callback Lua (ex: blink.cmp no Neovim,
+    " "pula pro proximo placeholder do snippet ou cai pro Tab normal") nao
+    " tem chave 'rhs' no dict devolvido por maparg() -- acessar .rhs direto
+    " dispara E716 em TODA inicializacao do Neovim (achado real, reportado
+    " pelo Alberto: erro/prompt "Press ENTER" logo ao abrir). get() com
+    " default cobre os dois formatos (rhs string classico e callback).
+    let s:tab_fallback_rhs = get(original_map, 'rhs', '')
     let s:tab_fallback_is_expr = get(original_map, 'expr', 0)
+    let s:tab_fallback_callback = get(original_map, 'callback', v:null)
   endif
   inoremap <script><silent><expr> <Tab> vim_ai_autocomplete#TabHandler()
 endfunction
@@ -200,6 +233,13 @@ endfunction
 function! vim_ai_autocomplete#TabHandler() abort
   if vim_ai_autocomplete#IsVisible()
     return vim_ai_autocomplete#Accept()
+  endif
+  if !empty(get(s:, 'tab_fallback_callback', v:null))
+    " mapeamento original e <expr>: o retorno do callback E' o resultado do
+    " expr (mesmo mecanismo que o Neovim usa internamente pra mapeamentos
+    " <expr> com callback Lua, ex: blink.cmp).
+    let result = s:tab_fallback_callback()
+    return s:tab_fallback_is_expr ? result : ''
   endif
   return s:tab_fallback_is_expr ? eval(s:tab_fallback_rhs) : s:tab_fallback_rhs
 endfunction
@@ -267,11 +307,13 @@ endfunction
 
 function! vim_ai_autocomplete#SetupProviderToggle(has_gemini, has_claude) abort
   if a:has_gemini && a:has_claude
-    " <leader>pv, nao <leader>ap: <leader>a ja e mapeado (code actions do CoC,
-    " configs.vim) -- <leader>ap compartilhava prefixo com um mapeamento
-    " completo existente, exigindo digitar rapido o suficiente pro timeoutlen
-    " nao resolver so <leader>a sozinho (achado real, reportado pelo Alberto).
-    nnoremap <silent> <leader>pv :call vim_ai_autocomplete#ToggleProvider()<CR>
+    " <leader>pr, nao <leader>ap nem <leader>pv: <leader>a ja e code actions
+    " do CoC (configs.vim) -- <leader>ap compartilhava prefixo com um
+    " mapeamento completo existente (achado real, reportado pelo Alberto).
+    " <leader>pv tambem foi descartado: colide com o seletor de venv Python
+    " do lado Neovim (nvim/lua/user/venv.lua) -- mesma tecla escolhida nos
+    " dois lados por consistencia, entao precisa ser livre nos dois.
+    nnoremap <silent> <leader>pr :call vim_ai_autocomplete#ToggleProvider()<CR>
   endif
 endfunction
 
@@ -284,10 +326,18 @@ let s:timer_id = -1
 let s:gen = 0
 
 function! vim_ai_autocomplete#Trigger() abort
+  if !get(g:, 'vim_ai_autocomplete_auto_trigger', 1)
+    return
+  endif
   if s:timer_id != -1
     call timer_stop(s:timer_id)
   endif
   let s:timer_id = timer_start(600, function('vim_ai_autocomplete#OnTimer'))
+endfunction
+
+function! vim_ai_autocomplete#ToggleAutoTrigger() abort
+  let g:vim_ai_autocomplete_auto_trigger = !get(g:, 'vim_ai_autocomplete_auto_trigger', 1)
+  echom 'vim-ai-autocomplete: auto-trigger ' . (g:vim_ai_autocomplete_auto_trigger ? 'ligado' : 'desligado')
 endfunction
 
 function! vim_ai_autocomplete#OnTimer(timer_id) abort
