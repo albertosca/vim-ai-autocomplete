@@ -1,3 +1,45 @@
+" Default preservando exatamente o comportamento de hoje (Gemini + Claude,
+" mesmos model_id) quando o usuario nao define g:vim_ai_autocomplete_models.
+function! vim_ai_autocomplete#DefaultModels() abort
+  return [
+        \ {'name': 'gemini', 'family': 'gemini', 'model_id': 'gemini-3.1-flash-lite', 'api_key_env': 'GEMINI_API_KEY'},
+        \ {'name': 'claude', 'family': 'anthropic', 'model_id': 'claude-sonnet-4-5-20250929', 'api_key_env': 'ANTHROPIC_API_KEY'},
+        \ ]
+endfunction
+
+" Filtra a lista crua (de g:vim_ai_autocomplete_models ou do default) pelos
+" modelos cuja api_key_env esta de fato setada e nao-vazia no ambiente --
+" essa e a lista "ativa" que entra no rodizio do ,pr / :VimAiAutocompleteModel.
+" Nomes duplicados: so a PRIMEIRA ocorrencia entra (deterministico), as
+" seguintes sao ignoradas e reportadas em "warnings" (a funcao e pura --
+" quem chama decide o que fazer com os avisos, ex: echoerr).
+function! vim_ai_autocomplete#ResolveActiveModels(models) abort
+  let active = []
+  let warnings = []
+  let seen_names = {}
+  for model in a:models
+    if has_key(seen_names, model.name)
+      call add(warnings, 'modelo duplicado "' . model.name . '" em g:vim_ai_autocomplete_models -- ignorando')
+      continue
+    endif
+    let seen_names[model.name] = 1
+    let key_value = getenv(model.api_key_env)
+    if type(key_value) == v:t_string && !empty(key_value)
+      call add(active, model)
+    endif
+  endfor
+  return [active, warnings]
+endfunction
+
+function! vim_ai_autocomplete#FindModelByName(models, name) abort
+  for model in a:models
+    if model.name ==# a:name
+      return model
+    endif
+  endfor
+  return v:null
+endfunction
+
 function! vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude) abort
   if !a:has_gemini && !a:has_claude
     return [v:null, 'error', 'nenhuma API key encontrada (GEMINI_API_KEY nem ANTHROPIC_API_KEY) -- configure pelo menos uma em ~/.zsh_secrets']
