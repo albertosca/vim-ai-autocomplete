@@ -109,32 +109,46 @@ endfunction
 " aceito ("def soma(a, b):\n    return a + b)"). Retorna quantos
 " caracteres do INICIO de "depois" devem ser descartados (nao inseridos
 " de volta) ao aceitar.
-function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_text, after_text) abort
+" g:AutoPairs (plugins/auto-pairs) fecha (){}[]  E aspas simples/duplas/
+" crase -- cobre os dois tipos de par aqui. Brackets sao ASSIMETRICOS
+" (abertura != fechamento, empilha de verdade); aspas sao SIMETRICAS
+" (mesmo caractere abre e fecha -- alternar: se o topo da pilha ja e essa
+" mesma aspa, fecha; senao, abre uma nova). Achado real, reportado pelo
+" Alberto depois do fix so-parenteses: "tem que aparecer pra quaisquer
+" caracteres que forem ser removidos" -- nao so ( ) [ ] { }.
+function! s:AdvanceBracketStack(stack, text) abort
   let pairs = {'(': ')', '[': ']', '{': '}'}
   let closers = ')]}'
-  let stack = []
-  for char in split(a:before_text, '\zs')
-    if has_key(pairs, char)
-      call add(stack, char)
-    elseif stridx(closers, char) >= 0 && !empty(stack) && pairs[stack[-1]] ==# char
-      call remove(stack, -1)
+  let quotes = '"''`'
+  for char in split(a:text, '\zs')
+    if stridx(quotes, char) >= 0
+      if !empty(a:stack) && a:stack[-1] ==# char
+        call remove(a:stack, -1)
+      else
+        call add(a:stack, char)
+      endif
+    elseif has_key(pairs, char)
+      call add(a:stack, char)
+    elseif stridx(closers, char) >= 0 && !empty(a:stack) && get(pairs, a:stack[-1], '') ==# char
+      call remove(a:stack, -1)
     endif
   endfor
+  return a:stack
+endfunction
+
+function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_text, after_text) abort
+  let closers = ')]}"''`'
+  let stack = s:AdvanceBracketStack([], a:before_text)
   let depth_before = len(stack)
-  for char in split(a:suggestion_text, '\zs')
-    if has_key(pairs, char)
-      call add(stack, char)
-    elseif stridx(closers, char) >= 0 && !empty(stack) && pairs[stack[-1]] ==# char
-      call remove(stack, -1)
-    endif
-  endfor
+  let stack = s:AdvanceBracketStack(stack, a:suggestion_text)
   let redundant = max([0, depth_before - len(stack)])
   if redundant == 0
     return 0
   endif
   " so descarta se "depois" realmente comecar com essa quantidade de
-  " fechamentos -- senao pode nao ser o mesmo bracket (edicao incomum),
-  " melhor nao arriscar apagar algo que nao e obviamente redundante.
+  " fechamentos -- senao pode nao ser o mesmo bracket/aspa (edicao
+  " incomum), melhor nao arriscar apagar algo que nao e obviamente
+  " redundante.
   let n = 0
   while n < redundant && n < len(a:after_text) && stridx(closers, a:after_text[n]) >= 0
     let n += 1
@@ -449,8 +463,17 @@ function! s:OnClaudeKeyCheckExit(status, chunks) abort
   if empty(message)
     return
   endif
+  " Claude nao funciona -- volta pro Gemini sozinho em vez de deixar o
+  " usuario preso num provider que sabidamente vai falhar em toda
+  " sugestao (achado real, reportado pelo Alberto: "alem do aviso tem que
+  " destrocar pro gemini"). So reverte se o usuario ainda estiver em
+  " claude -- se ja alternou de volta manualmente antes desta checagem
+  " assincrona terminar, nao mexe.
+  if g:vim_ai_autocomplete_provider ==# 'claude'
+    let g:vim_ai_autocomplete_provider = 'gemini'
+  endif
   echohl WarningMsg
-  echomsg 'vim-ai-autocomplete (claude): ' . message
+  echomsg 'vim-ai-autocomplete (claude): ' . message . ' -- voltando pro gemini'
   echohl None
 endfunction
 
