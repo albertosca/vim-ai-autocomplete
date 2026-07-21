@@ -314,9 +314,21 @@ function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   for l in a:lines[1:]
     call prop_add(line('.'), 0, {'type': s:prop_type, 'text_align': 'below', 'text': l})
   endfor
+  let redundant = a:0 > 0 ? a:1 : 0
+  if redundant > 0
+    " realca (mesmo highlight do ghost text) os caracteres reais que vao
+    " ser descartados ao aceitar -- sem 'text', prop_add so aplica o
+    " highlight sobre texto JA existente (nao insere nada). Sem isso, o
+    " preview mostrava um fechamento real (cor normal) logo depois do
+    " fechamento que a propria sugestao ja trouxe -- parecia duplicado no
+    " preview mesmo o Accept() ja descartando ele de verdade (achado real,
+    " reportado pelo Alberto: "o cinza que mostra o que ele sera ainda ta
+    " errado").
+    call prop_add(line('.'), col('.'), {'type': s:prop_type, 'length': redundant})
+  endif
   let s:current_suggestion = copy(a:lines)
   let s:suggestion_lnum = line('.')
-  let s:suggestion_redundant_after = a:0 > 0 ? a:1 : 0
+  let s:suggestion_redundant_after = redundant
 endfunction
 
 function! vim_ai_autocomplete#ClearSuggestion() abort
