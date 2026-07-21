@@ -40,6 +40,19 @@ function! vim_ai_autocomplete#FindModelByName(models, name) abort
   return v:null
 endfunction
 
+" Ponto de entrada publico: le g:vim_ai_autocomplete_models (ou o default
+" se o usuario nao configurou nada), resolve a lista ativa, e reporta
+" (echoerr) qualquer aviso de config invalida (ex: nome duplicado) --
+" ResolveActiveModels() continua pura, o efeito colateral fica so aqui.
+function! vim_ai_autocomplete#ActiveModels() abort
+  let models = get(g:, 'vim_ai_autocomplete_models', vim_ai_autocomplete#DefaultModels())
+  let [active, warnings] = vim_ai_autocomplete#ResolveActiveModels(models)
+  for warning in warnings
+    echoerr 'vim-ai-autocomplete: ' . warning
+  endfor
+  return active
+endfunction
+
 " Generaliza o antigo ResolveProvider(has_gemini, has_claude): decide o
 " modelo default e se precisa avisar/travar, a partir da lista de modelos
 " ATIVOS (ja filtrada por ResolveActiveModels). all_models e usada so pra
