@@ -624,13 +624,21 @@ function! vim_ai_autocomplete#OnTimer(timer_id) abort
 endfunction
 
 function! vim_ai_autocomplete#RequestCompletion() abort
-  let has_gemini = !empty($GEMINI_API_KEY)
-  let has_claude = !empty($ANTHROPIC_API_KEY)
-  let [default_provider, level, _] = vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude)
+  let all_models = get(g:, 'vim_ai_autocomplete_models', vim_ai_autocomplete#DefaultModels())
+  let active = vim_ai_autocomplete#ActiveModels()
+  let [default_name, level, _] = vim_ai_autocomplete#ResolveDefaultModel(all_models, active)
   if level ==# 'error'
     return
   endif
-  let provider = get(g:, 'vim_ai_autocomplete_provider', default_provider)
+  let provider_name = get(g:, 'vim_ai_autocomplete_provider', default_name)
+  let model = vim_ai_autocomplete#FindModelByName(active, provider_name)
+  if model is v:null
+    " o provider configurado nao esta mais ativo (ex: key removida em
+    " runtime, ou nunca foi setado) -- cai pro default resolvido acima.
+    let model = vim_ai_autocomplete#FindModelByName(active, default_name)
+  endif
+  let handler = vim_ai_autocomplete#FamilyHandler(model.family)
+  let api_key = getenv(model.api_key_env)
 
   let first = max([1, line('.') - 100])
   let last = min([line('$'), line('.') + 20])
@@ -640,13 +648,7 @@ function! vim_ai_autocomplete#RequestCompletion() abort
         \ lines_before_full, getline('.'), col('.'), lines_after_full)
   let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
 
-  if provider ==# 'gemini'
-    let body = vim_ai_autocomplete#BuildGeminiRequest(context)
-    let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=' . $GEMINI_API_KEY
-    let cmd = ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
-  else
-    let cmd = vim_ai_autocomplete#BuildClaudeCommand(context, 'claude-sonnet-4-5-20250929', $ANTHROPIC_API_KEY)
-  endif
+  let cmd = handler.build_command(context, model.model_id, api_key)
 
   let s:gen += 1
   let l:gen = s:gen
@@ -654,12 +656,13 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let l:bufnr = bufnr('%')
   let l:lnum = line('.')
   let l:col = col('.')
-  let l:provider = provider
+  let l:provider = model.name
+  let l:ParseResponse = handler.parse_response
   let l:after = context.after
 
   let opts = {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
-        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:bufnr, l:lnum, l:col, l:after)},
+        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:ParseResponse, l:bufnr, l:lnum, l:col, l:after)},
         \ 'out_mode': 'raw',
         \ }
   call job_start(cmd, opts)
@@ -695,7 +698,7 @@ function! s:WarnCompletionFailure(provider, status, raw_output) abort
   echohl None
 endfunction
 
-function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col, after) abort
+function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, col, after) abort
   if a:gen != s:gen
     return
   endif
@@ -707,9 +710,7 @@ function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col, after) abort
     return
   endif
   let body = join(a:chunks, '')
-  let lines = a:provider ==# 'gemini'
-        \ ? vim_ai_autocomplete#ParseGeminiResponse(body)
-        \ : vim_ai_autocomplete#ParseClaudeResponse(body)
+  let lines = a:parse_response(body)
   if !empty(lines)
     let s:last_completion_error = ''
     let current_line = getline(a:lnum)
