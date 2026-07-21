@@ -344,6 +344,7 @@ let s:prop_type = 'VimAiAutocompleteSuggestion'
 let s:redundant_prop_type = 'VimAiAutocompleteRedundant'
 let s:current_suggestion = []
 let s:suggestion_lnum = 0
+let s:suggestion_col = 0
 let s:suggestion_redundant_after = 0
 
 function! s:EnsurePropType() abort
@@ -395,6 +396,7 @@ function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   endif
   let s:current_suggestion = copy(a:lines)
   let s:suggestion_lnum = line('.')
+  let s:suggestion_col = col('.')
   let s:suggestion_redundant_after = redundant
 endfunction
 
@@ -408,6 +410,7 @@ function! vim_ai_autocomplete#ClearSuggestion() abort
   endif
   let s:current_suggestion = []
   let s:suggestion_lnum = 0
+  let s:suggestion_col = 0
   let s:suggestion_redundant_after = 0
 endfunction
 
@@ -605,6 +608,19 @@ let s:timer_id = -1
 let s:gen = 0
 
 function! vim_ai_autocomplete#Trigger() abort
+  " se o cursor se moveu pra longe de onde a sugestao foi mostrada (ex:
+  " setas pra revisar o texto antes de aceitar), ela fica invalida --
+  " aceitar ela do jeito que esta inseriria o texto errado na posicao
+  " errada. Achado real, reportado pelo Alberto: mover o cursor com as
+  " setas antes do Tab corrompia o buffer ("def mergesortarr):" -- o "("
+  " sumiu, sobrou um ")" extra no fim -- a sugestao STALE (calculada pra
+  " uma posicao) foi aceita numa posicao DIFERENTE (a nova, pos-movimento).
+  " Limpa incondicionalmente, mesmo com auto_trigger desligado -- isso e
+  " sobre correcao (nao deixar aceitar algo invalido), nao sobre pedir uma
+  " sugestao nova.
+  if vim_ai_autocomplete#IsVisible() && (line('.') != s:suggestion_lnum || col('.') != s:suggestion_col)
+    call vim_ai_autocomplete#ClearSuggestion()
+  endif
   if !get(g:, 'vim_ai_autocomplete_auto_trigger', 1)
     return
   endif
