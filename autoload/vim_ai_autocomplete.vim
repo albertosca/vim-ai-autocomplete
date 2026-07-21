@@ -10,6 +10,20 @@ function! vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude) abort
   return [provider, 'warn', message]
 endfunction
 
+" A linha ATUAL (onde o cursor esta de verdade) nunca deveria entrar
+" inteira nem em "antes" nem em "depois" -- precisa ser cortada na coluna
+" do cursor. Achado real (2026-07-20, reportado pelo Alberto): sem isso,
+" "def soma(" com cursor entre os parenteses que o auto-pairs ja inseriu
+" mandava a linha INTEIRA ("def soma()") pros DOIS lados do prompt FIM, sem
+" indicar onde o cursor realmente estava -- o modelo, confuso, chegou a
+" gerar "(a, b):\n    return a + b)" do zero, duplicando o parenteses de
+" abertura.
+function! vim_ai_autocomplete#SplitLinesAtCursor(lines_before_full, current_line, col, lines_after_full) abort
+  let before_part = a:col > 1 ? a:current_line[: a:col - 2] : ''
+  let after_part = a:current_line[a:col - 1 :]
+  return [a:lines_before_full + [before_part], [after_part] + a:lines_after_full]
+endfunction
+
 function! vim_ai_autocomplete#BuildContext(lines_before, lines_after, max_chars) abort
   let before = join(a:lines_before, "\n")
   let after = join(a:lines_after, "\n")
@@ -84,6 +98,50 @@ function! vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, after_text) 
   return split(trimmed_text, "\n", 1)
 endfunction
 
+" Complementa TrimSuggestionOverlapWithAfter() -- essa cobre sobreposicao
+" de TEXTO (sugestao termina com o que "depois" comeca); esta cobre
+" sobreposicao de ESTRUTURA: quando a sugestao fecha, com seu proprio
+" texto, um parenteses/colchete/chave que ja estava aberto ANTES do
+" cursor, o fechamento real que ja existe em "depois" (ex: inserido pelo
+" auto-pairs) fica orfao. Achado real (2026-07-20, "def soma(" com cursor
+" entre os parenteses): a sugestao "a, b):\n    return a + b" fecha o
+" proprio "(" de "def soma(" -- o ")" real sobrava no fim do texto
+" aceito ("def soma(a, b):\n    return a + b)"). Retorna quantos
+" caracteres do INICIO de "depois" devem ser descartados (nao inseridos
+" de volta) ao aceitar.
+function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_text, after_text) abort
+  let pairs = {'(': ')', '[': ']', '{': '}'}
+  let closers = ')]}'
+  let stack = []
+  for char in split(a:before_text, '\zs')
+    if has_key(pairs, char)
+      call add(stack, char)
+    elseif stridx(closers, char) >= 0 && !empty(stack) && pairs[stack[-1]] ==# char
+      call remove(stack, -1)
+    endif
+  endfor
+  let depth_before = len(stack)
+  for char in split(a:suggestion_text, '\zs')
+    if has_key(pairs, char)
+      call add(stack, char)
+    elseif stridx(closers, char) >= 0 && !empty(stack) && pairs[stack[-1]] ==# char
+      call remove(stack, -1)
+    endif
+  endfor
+  let redundant = max([0, depth_before - len(stack)])
+  if redundant == 0
+    return 0
+  endif
+  " so descarta se "depois" realmente comecar com essa quantidade de
+  " fechamentos -- senao pode nao ser o mesmo bracket (edicao incomum),
+  " melhor nao arriscar apagar algo que nao e obviamente redundante.
+  let n = 0
+  while n < redundant && n < len(a:after_text) && stridx(closers, a:after_text[n]) >= 0
+    let n += 1
+  endwhile
+  return n
+endfunction
+
 function! vim_ai_autocomplete#BuildClaudeCommand(context, model, has_ant_authenticated, api_key) abort
   let body = vim_ai_autocomplete#BuildClaudeRequest(a:context, a:model)
   if a:has_ant_authenticated
@@ -113,6 +171,7 @@ endfunction
 let s:ant_authenticated = 0
 let s:ant_auth_job = v:null
 let s:ant_auth_output = []
+let s:ant_auth_failure_message = ''
 
 function! vim_ai_autocomplete#CheckAntAuth() abort
   if !executable('ant')
@@ -166,9 +225,11 @@ endfunction
 function! s:OnAntAuthCheckExit(job, status) abort
   let s:ant_authenticated = (a:status == 0)
   if s:ant_authenticated
+    let s:ant_auth_failure_message = ''
     call vim_ai_autocomplete#SetupProviderToggle(!empty($GEMINI_API_KEY), 1)
   else
-    echomsg vim_ai_autocomplete#DescribeAntAuthFailure(join(s:ant_auth_output, ''))
+    let s:ant_auth_failure_message = vim_ai_autocomplete#DescribeAntAuthFailure(join(s:ant_auth_output, ''))
+    echomsg s:ant_auth_failure_message
   endif
 endfunction
 
@@ -229,6 +290,7 @@ endfunction
 let s:prop_type = 'VimAiAutocompleteSuggestion'
 let s:current_suggestion = []
 let s:suggestion_lnum = 0
+let s:suggestion_redundant_after = 0
 
 function! s:EnsurePropType() abort
   if empty(prop_type_get(s:prop_type))
@@ -236,7 +298,13 @@ function! s:EnsurePropType() abort
   endif
 endfunction
 
-function! vim_ai_autocomplete#ShowSuggestion(lines) abort
+" redundant_after (opcional, default 0): quantos caracteres do INICIO do
+" texto real DEPOIS do cursor devem ser DESCARTADOS (nao preservados) ao
+" aceitar -- ver CountRedundantAfterChars(). Usado quando a sugestao ja
+" fecha, com seu proprio texto, um parenteses/colchete/chave que estava
+" aberto antes do cursor, deixando o fechamento real (ex: do auto-pairs)
+" orfao/duplicado.
+function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   call vim_ai_autocomplete#ClearSuggestion()
   if empty(a:lines)
     return
@@ -248,6 +316,7 @@ function! vim_ai_autocomplete#ShowSuggestion(lines) abort
   endfor
   let s:current_suggestion = copy(a:lines)
   let s:suggestion_lnum = line('.')
+  let s:suggestion_redundant_after = a:0 > 0 ? a:1 : 0
 endfunction
 
 function! vim_ai_autocomplete#ClearSuggestion() abort
@@ -257,6 +326,7 @@ function! vim_ai_autocomplete#ClearSuggestion() abort
   call prop_remove({'type': s:prop_type, 'all': v:true}, s:suggestion_lnum)
   let s:current_suggestion = []
   let s:suggestion_lnum = 0
+  let s:suggestion_redundant_after = 0
 endfunction
 
 function! vim_ai_autocomplete#IsVisible() abort
@@ -322,6 +392,7 @@ endfunction
 
 function! vim_ai_autocomplete#Accept() abort
   let lines = vim_ai_autocomplete#CurrentSuggestion()
+  let redundant_after = s:suggestion_redundant_after
   call vim_ai_autocomplete#ClearSuggestion()
   if empty(lines)
     return ''
@@ -340,14 +411,15 @@ function! vim_ai_autocomplete#Accept() abort
   " que o Vim volta pro loop de eventos, ja fora da avaliacao do <expr>.
   let lnum = line('.')
   let col = col('.')
-  call timer_start(0, {-> vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col)})
+  call timer_start(0, {-> vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, redundant_after)})
   return ''
 endfunction
 
-function! vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col) abort
+function! vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, ...) abort
+  let redundant_after = a:0 > 0 ? a:1 : 0
   let current_line = getline(a:lnum)
   let before = a:col > 1 ? current_line[: a:col - 2] : ''
-  let after = current_line[a:col - 1 :]
+  let after = strpart(current_line, a:col - 1 + redundant_after)
   let new_first_line = before . a:lines[0]
   if len(a:lines) == 1
     call setline(a:lnum, new_first_line . after)
@@ -376,6 +448,18 @@ endfunction
 function! vim_ai_autocomplete#ToggleProvider() abort
   let g:vim_ai_autocomplete_provider = g:vim_ai_autocomplete_provider ==# 'gemini' ? 'claude' : 'gemini'
   echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
+  " avisa na hora se ja sabemos que o ant esta com problema (ex: credito
+  " zerado) -- antes so descobria isso na primeira tentativa de completion
+  " (achado real, reportado pelo Alberto: "o erro da anthropic apareceu ao
+  " abrir o vim -- queria ao alternar pro claude tbm"). So cobre o caminho
+  " do ant (verificado no VimEnter); se so ANTHROPIC_API_KEY estatica
+  " estiver em uso, a falha aparece no primeiro completion mesmo, via
+  " s:WarnCompletionFailure.
+  if g:vim_ai_autocomplete_provider ==# 'claude' && !s:ant_authenticated && !empty(s:ant_auth_failure_message)
+    echohl WarningMsg
+    echomsg s:ant_auth_failure_message
+    echohl None
+  endif
 endfunction
 
 let s:timer_id = -1
@@ -416,8 +500,10 @@ function! vim_ai_autocomplete#RequestCompletion() abort
 
   let first = max([1, line('.') - 100])
   let last = min([line('$'), line('.') + 20])
-  let lines_before = getline(first, line('.'))
-  let lines_after = getline(line('.'), last)
+  let lines_before_full = getline(first, line('.') - 1)
+  let lines_after_full = getline(line('.') + 1, last)
+  let [lines_before, lines_after] = vim_ai_autocomplete#SplitLinesAtCursor(
+        \ lines_before_full, getline('.'), col('.'), lines_after_full)
   let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
 
   let stdin_body = ''
@@ -508,7 +594,8 @@ function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col, after) abort
       let current_line = getline(a:lnum)
       let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
       let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
-      call vim_ai_autocomplete#ShowSuggestion(lines)
+      let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
+      call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
     endif
   else
     call s:WarnCompletionFailure(a:provider, a:status, body)
