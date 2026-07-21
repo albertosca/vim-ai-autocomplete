@@ -226,6 +226,7 @@ function! vim_ai_autocomplete#AdjustSuggestionLines(lines, current_line_before_c
 endfunction
 
 let s:prop_type = 'VimAiAutocompleteSuggestion'
+let s:redundant_prop_type = 'VimAiAutocompleteRedundant'
 let s:current_suggestion = []
 let s:suggestion_lnum = 0
 let s:suggestion_redundant_after = 0
@@ -233,6 +234,26 @@ let s:suggestion_redundant_after = 0
 function! s:EnsurePropType() abort
   if empty(prop_type_get(s:prop_type))
     call prop_type_add(s:prop_type, {'highlight': 'Comment'})
+  endif
+endfunction
+
+" Highlight PROPRIO pro caractere real redundante -- riscado (strikethrough),
+" nao o mesmo estilo do ghost text. Reusar o highlight do ghost text (que
+" significa "isso vai ser inserido") pro caractere que na verdade vai ser
+" REMOVIDO era enganoso: aparecia como ghost text mas sumia ao aceitar com
+" Tab, em vez de "solidificar" como o resto da sugestao (achado real,
+" reportado pelo Alberto: "o parenteses errado aparece como ghost text mas
+" quando aperto tab ele nao aparece").
+function! s:EnsureRedundantPropType() abort
+  if empty(prop_type_get(s:redundant_prop_type))
+    if !hlexists('VimAiAutocompleteRedundant')
+      " strikethrough sozinho nao e confiavel (depende de t_Cs/t_Ce do
+      " terminal -- confirmado nao aparecer via captura de cores real
+      " dentro do tmux). Vermelho (gruvbox) como sinal PRINCIPAL, sempre
+      " visivel, com strikethrough de bonus quando o terminal suportar.
+      highlight default VimAiAutocompleteRedundant cterm=strikethrough gui=strikethrough ctermfg=167 guifg=#fb4934
+    endif
+    call prop_type_add(s:redundant_prop_type, {'highlight': 'VimAiAutocompleteRedundant'})
   endif
 endfunction
 
@@ -254,15 +275,8 @@ function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   endfor
   let redundant = a:0 > 0 ? a:1 : 0
   if redundant > 0
-    " realca (mesmo highlight do ghost text) os caracteres reais que vao
-    " ser descartados ao aceitar -- sem 'text', prop_add so aplica o
-    " highlight sobre texto JA existente (nao insere nada). Sem isso, o
-    " preview mostrava um fechamento real (cor normal) logo depois do
-    " fechamento que a propria sugestao ja trouxe -- parecia duplicado no
-    " preview mesmo o Accept() ja descartando ele de verdade (achado real,
-    " reportado pelo Alberto: "o cinza que mostra o que ele sera ainda ta
-    " errado").
-    call prop_add(line('.'), col('.'), {'type': s:prop_type, 'length': redundant})
+    call s:EnsureRedundantPropType()
+    call prop_add(line('.'), col('.'), {'type': s:redundant_prop_type, 'length': redundant})
   endif
   let s:current_suggestion = copy(a:lines)
   let s:suggestion_lnum = line('.')
@@ -274,6 +288,9 @@ function! vim_ai_autocomplete#ClearSuggestion() abort
     return
   endif
   call prop_remove({'type': s:prop_type, 'all': v:true}, s:suggestion_lnum)
+  if !empty(prop_type_get(s:redundant_prop_type))
+    call prop_remove({'type': s:redundant_prop_type, 'all': v:true}, s:suggestion_lnum)
+  endif
   let s:current_suggestion = []
   let s:suggestion_lnum = 0
   let s:suggestion_redundant_after = 0
@@ -398,6 +415,43 @@ endfunction
 function! vim_ai_autocomplete#ToggleProvider() abort
   let g:vim_ai_autocomplete_provider = g:vim_ai_autocomplete_provider ==# 'gemini' ? 'claude' : 'gemini'
   echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
+  " avisa na hora se a key estatica do Claude nao funciona (billing, key
+  " invalida, etc) -- sem isso, o usuario so descobre no primeiro completion
+  " de verdade (achado real, reportado pelo Alberto depois de remover o
+  " ant: "agora quando troco de provider nao tem mensagem de erro alguma").
+  " Chamada leve (max_tokens=1), disparada so ao alternar PRA claude, nao
+  " em todo VimEnter como o antigo CheckAntAuth fazia.
+  if g:vim_ai_autocomplete_provider ==# 'claude'
+    call s:CheckClaudeKey()
+  endif
+endfunction
+
+function! s:CheckClaudeKey() abort
+  if empty($ANTHROPIC_API_KEY)
+    return
+  endif
+  let body = json_encode({'model': 'claude-sonnet-4-5-20250929', 'max_tokens': 1,
+        \ 'messages': [{'role': 'user', 'content': 'hi'}]})
+  let cmd = ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
+        \ '-H', 'x-api-key: ' . $ANTHROPIC_API_KEY,
+        \ '-H', 'anthropic-version: 2023-06-01',
+        \ '-H', 'Content-Type: application/json', '-d', body]
+  let l:chunks = []
+  call job_start(cmd, {
+        \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
+        \ 'exit_cb': {job, status -> s:OnClaudeKeyCheckExit(status, l:chunks)},
+        \ 'out_mode': 'raw',
+        \ })
+endfunction
+
+function! s:OnClaudeKeyCheckExit(status, chunks) abort
+  let message = vim_ai_autocomplete#ExtractApiErrorMessage(join(a:chunks, ''))
+  if empty(message)
+    return
+  endif
+  echohl WarningMsg
+  echomsg 'vim-ai-autocomplete (claude): ' . message
+  echohl None
 endfunction
 
 let s:timer_id = -1
