@@ -42,13 +42,18 @@ endfunction
 
 " Ponto de entrada publico: le g:vim_ai_autocomplete_models (ou o default
 " se o usuario nao configurou nada), resolve a lista ativa, e reporta
-" (echoerr) qualquer aviso de config invalida (ex: nome duplicado) --
-" ResolveActiveModels() continua pura, o efeito colateral fica so aqui.
+" (echohl WarningMsg + echomsg, NAO echoerr -- echoerr lanca excecao e
+" aborta a funcao antes do "return active", quebrando a autocomplete
+" inteira a cada keystroke quando ha um aviso, ex: nome duplicado)
+" qualquer aviso de config invalida. ResolveActiveModels() continua pura,
+" o efeito colateral fica so aqui.
 function! vim_ai_autocomplete#ActiveModels() abort
   let models = get(g:, 'vim_ai_autocomplete_models', vim_ai_autocomplete#DefaultModels())
   let [active, warnings] = vim_ai_autocomplete#ResolveActiveModels(models)
   for warning in warnings
-    echoerr 'vim-ai-autocomplete: ' . warning
+    echohl WarningMsg
+    echomsg 'vim-ai-autocomplete: ' . warning
+    echohl None
   endfor
   return active
 endfunction
@@ -553,7 +558,7 @@ endfunction
 function! vim_ai_autocomplete#CompleteModelNames(arglead, cmdline, cursorpos) abort
   let active = vim_ai_autocomplete#ActiveModels()
   let names = map(copy(active), 'v:val.name')
-  return filter(names, 'v:val =~# "^" . a:arglead')
+  return filter(names, 'stridx(v:val, a:arglead) == 0')
 endfunction
 
 " Generaliza s:CheckClaudeKey/s:OnClaudeKeyCheckExit (antes so existia pro
