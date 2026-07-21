@@ -49,8 +49,8 @@ endfunction
 " 'x):\n    return x * 2' pra "def foo(" (fecha o proprio parenteses); COM,
 " devolve so 'x, y' (sem duplicar). A instrucao sozinha nao e 100%
 " confiavel (outro teste real mostrou o modelo repetindo o sufixo inteiro
-" 3/3 vezes) -- por isso tambem existe TrimSuggestionOverlapWithAfter()
-" como rede de seguranca no pos-processamento.
+" 3/3 vezes) -- por isso tambem existe ComputeTextOverlapLength() como
+" rede de seguranca no pos-processamento.
 function! vim_ai_autocomplete#BuildGeminiRequest(context) abort
   let prompt = "Complete o codigo a seguir. O cursor esta entre o texto ANTES e o texto DEPOIS, que ja existem no buffer. Responda SOMENTE com o texto que deve ser inserido ENTRE eles -- nao repita nada que ja aparece em ANTES ou DEPOIS. Sem explicacao, sem markdown.\n\nANTES DO CURSOR:\n" . a:context.before . "\n\nDEPOIS DO CURSOR:\n" . a:context.after
   return json_encode({'contents': [{'parts': [{'text': prompt}]}]})
@@ -61,52 +61,46 @@ function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
   return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
 endfunction
 
-" Rede de seguranca pro prompt FIM acima -- se o modelo mesmo assim repetir
-" (parcial ou totalmente) o texto que ja existe depois do cursor, remove
-" essa sobreposicao da sugestao. Acha a maior sobreposicao entre o FIM da
-" sugestao e o INICIO do texto depois do cursor e corta ela. Se a sugestao
-" inteira for so essa repeticao (nada de novo pra inserir), retorna lista
-" vazia -- nao [''], que apareceria como uma sugestao fantasma vazia mas
-" "visivel" (IsVisible() conta [''] como visivel).
-function! vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, after_text) abort
+" Acha a maior sobreposicao entre o FIM da sugestao e o INICIO do texto
+" "depois" (o que sobra depois de ja descontar a redundancia estrutural
+" de CountRedundantAfterChars() -- ver s:OnExit). So CALCULA o tamanho da
+" sobreposicao -- NAO corta a sugestao. Antes (ate 2026-07-20) esta funcao
+" (TrimSuggestionOverlapWithAfter) cortava a sugestao silenciosamente
+" quando achava sobreposicao, o que escondia a mudanca do usuario -- o
+" cinza (ghost text) aparecia ajustado mas nunca ficava vermelho, ao
+" contrario do caso estrutural (parenteses/aspas), que sempre mostra o
+" caractere real redundante em vermelho antes de apagar. Unificado: agora
+" as DUAS fontes de redundancia (estrutural + sobreposicao textual) se
+" somam num so redundant_after, sempre com o mesmo tratamento visual
+" (achado real, reportado pelo Alberto: "o vermelho nao aparece nem com o
+" cinza ja escrito" -- o cinza tinha sido ajustado por este mecanismo,
+" mas nada ficava vermelho porque cortar o texto da sugestao e marcar
+" caractere real como redundante eram coisas diferentes).
+function! vim_ai_autocomplete#ComputeTextOverlapLength(lines, after_text) abort
   if empty(a:lines) || empty(a:after_text)
-    return a:lines
+    return 0
   endif
   let suggestion_text = join(a:lines, "\n")
   let max_check = min([len(suggestion_text), len(a:after_text)])
-  let overlap_len = 0
   let n = max_check
   while n > 0
     let suffix = strpart(suggestion_text, len(suggestion_text) - n, n)
     let prefix = strpart(a:after_text, 0, n)
     if suffix ==# prefix
-      let overlap_len = n
-      break
+      return n
     endif
     let n -= 1
   endwhile
-  if overlap_len == 0
-    return a:lines
-  endif
-  let trimmed_text = strpart(suggestion_text, 0, len(suggestion_text) - overlap_len)
-  " se o corte caiu exatamente numa quebra de linha, sobra um "\n" pendurado
-  " no fim -- split() geraria uma linha vazia fantasma extra no resultado.
-  let trimmed_text = substitute(trimmed_text, '\n$', '', '')
-  if empty(trimmed_text)
-    return []
-  endif
-  return split(trimmed_text, "\n", 1)
+  return 0
 endfunction
 
-" Complementa TrimSuggestionOverlapWithAfter() -- essa cobre sobreposicao
-" de TEXTO (sugestao termina com o que "depois" comeca); esta cobre
-" sobreposicao de ESTRUTURA: quando a sugestao fecha, com seu proprio
-" texto, um parenteses/colchete/chave que ja estava aberto ANTES do
-" cursor, o fechamento real que ja existe em "depois" (ex: inserido pelo
-" auto-pairs) fica orfao. Achado real (2026-07-20, "def soma(" com cursor
-" entre os parenteses): a sugestao "a, b):\n    return a + b" fecha o
-" proprio "(" de "def soma(" -- o ")" real sobrava no fim do texto
-" aceito ("def soma(a, b):\n    return a + b)"). Retorna quantos
+" Cobre sobreposicao de ESTRUTURA: quando a sugestao fecha, com seu
+" proprio texto, um parenteses/colchete/chave/aspa que ja estava aberto
+" ANTES do cursor, o fechamento real que ja existe em "depois" (ex:
+" inserido pelo auto-pairs) fica orfao. Achado real (2026-07-20, "def
+" soma(" com cursor entre os parenteses): a sugestao "a, b):\n    return
+" a + b" fecha o proprio "(" de "def soma(" -- o ")" real sobrava no fim
+" do texto aceito ("def soma(a, b):\n    return a + b)"). Retorna quantos
 " caracteres do INICIO de "depois" devem ser descartados (nao inseridos
 " de volta) ao aceitar.
 " g:AutoPairs (plugins/auto-pairs) fecha (){}[]  E aspas simples/duplas/
@@ -596,27 +590,37 @@ function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col, after) abort
     let current_line = getline(a:lnum)
     let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
     " CountRedundantAfterChars PRECISA rodar com a sugestao ORIGINAL, antes
-    " de qualquer trim -- achado real, reportado pelo Alberto ("def
+    " de qualquer ajuste -- achado real, reportado pelo Alberto ("def
     " fibonacci(" -- o ultimo parenteses nao aparecia vermelho): a
     " sugestao real fecha uma chamada INTERNA (fibonacci(n - 2)) cujo ")"
     " final coincide textualmente com o "depois" do cursor (so um ")").
-    " TrimSuggestionOverlapWithAfter, rodando ANTES, cortava esse ")"
-    " achando que era sobreposicao com o "depois" -- corrompendo a
-    " sugestao (perdia o fechamento da chamada interna) e zerando o
-    " calculo de redundancia (a pilha de brackets nunca fechava de volta,
-    " entao CountRedundantAfterChars nao via diferenca de profundidade).
-    " Corrigido computando a redundancia estrutural PRIMEIRO (com o texto
-    " intacto), e so entao rodando o trim de sobreposicao textual contra o
-    " que SOBRA de "depois" (excluindo o que ja foi contabilizado como
-    " redundante) -- assim o trim nao pode mais corromper um fechamento
-    " legitimo que a analise de brackets ja atribuiu corretamente.
+    " Cortar a sugestao ANTES corrompia esse fechamento legitimo e zerava
+    " o calculo de profundidade. Corrigido computando a redundancia
+    " estrutural PRIMEIRO (com o texto intacto).
+    "
+    " As duas fontes de redundancia -- estrutural (brackets/aspas) e
+    " sobreposicao textual (ComputeTextOverlapLength) -- se SOMAM num so
+    " redundant_after, e a sugestao NUNCA e cortada: sempre mostra o texto
+    " completo da API, com o real "depois" marcado em vermelho e
+    " descartado ao aceitar. Antes, a sobreposicao textual cortava a
+    " sugestao silenciosamente (sem marcar nada de vermelho) -- achado
+    " real, reportado pelo Alberto: "o vermelho nao aparece nem com o
+    " cinza ja escrito" (o cinza tinha sido ajustado por esse mecanismo,
+    " mas o real nunca ficava marcado porque eram tratamentos diferentes).
     let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
     let remaining_after = strpart(a:after, redundant_after)
-    let lines = vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, remaining_after)
-    if !empty(lines)
-      let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
-      call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
-    endif
+    let redundant_after += vim_ai_autocomplete#ComputeTextOverlapLength(lines, remaining_after)
+    " a:after pode atravessar VARIAS linhas reais do buffer (RequestCompletion
+    " manda ate 20 linhas abaixo do cursor pro prompt) -- mas o highlight
+    " (prop_add com 'length') e o Accept() (strpart na linha atual) so
+    " operam na linha do cursor. Limita redundant_after ao que sobra de
+    " verdade NESSA linha, pra nunca tentar marcar/apagar texto de linhas
+    " reais seguintes (caso raro: sugestao inteira duplicando varias
+    " linhas existentes) -- escopo conhecido, nao coberto.
+    let current_line_remainder = strpart(current_line, a:col - 1)
+    let redundant_after = min([redundant_after, len(current_line_remainder)])
+    let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
+    call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
   else
     call s:WarnCompletionFailure(a:provider, a:status, body)
   endif
