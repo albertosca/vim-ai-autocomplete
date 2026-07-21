@@ -40,16 +40,21 @@ function! vim_ai_autocomplete#FindModelByName(models, name) abort
   return v:null
 endfunction
 
-function! vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude) abort
-  if !a:has_gemini && !a:has_claude
-    return [v:null, 'error', 'nenhuma API key encontrada (GEMINI_API_KEY nem ANTHROPIC_API_KEY) -- configure pelo menos uma em ~/.zsh_secrets']
+" Generaliza o antigo ResolveProvider(has_gemini, has_claude): decide o
+" modelo default e se precisa avisar/travar, a partir da lista de modelos
+" ATIVOS (ja filtrada por ResolveActiveModels). all_models e usada so pra
+" listar as api_key_env configuradas na mensagem de erro (nao importa
+" quais estao ativas -- o usuario quer saber o que configurar).
+function! vim_ai_autocomplete#ResolveDefaultModel(all_models, active_models) abort
+  if empty(a:active_models)
+    let env_names = map(copy(a:all_models), 'v:val.api_key_env')
+    return [v:null, 'error', 'nenhuma API key encontrada (' . join(env_names, ' nem ') . ') -- configure pelo menos uma']
   endif
-  if a:has_gemini && a:has_claude
-    return ['gemini', v:null, v:null]
+  if len(a:active_models) == 1
+    let name = a:active_models[0].name
+    return [name, 'warn', printf('so %s disponivel -- toggle ,pr desabilitado', name)]
   endif
-  let provider = a:has_gemini ? 'gemini' : 'claude'
-  let message = printf('só %s disponível (falta a outra API key) -- toggle ,pr desabilitado', provider)
-  return [provider, 'warn', message]
+  return [a:active_models[0].name, v:null, v:null]
 endfunction
 
 " A linha ATUAL (onde o cursor esta de verdade) nunca deveria entrar
