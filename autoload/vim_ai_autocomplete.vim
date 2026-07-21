@@ -226,7 +226,7 @@ endfunction
 " escreve sua PROPRIA versao completa do par (ex: "(arr):" pra
 " "def quicksort") -- o par vazio original fica orfao no final
 " ("def quicksort(arr):()"). Achado real, reportado pelo Alberto 2026-07-21
-" (log de debug g:vim_ai_autocomplete_debug em InsertAcceptedLines).
+" e root-caused via log de debug temporario (removido apos o fix).
 " So descarta se a sugestao de fato USA esse mesmo tipo de bracket/aspa em
 " algum lugar -- mesmo espirito conservador do bloco acima, evita apagar um
 " par vazio que por coincidencia esta logo apos o cursor mas nao tem
@@ -532,7 +532,6 @@ function! vim_ai_autocomplete#Accept() abort
   " que o Vim volta pro loop de eventos, ja fora da avaliacao do <expr>.
   let lnum = line('.')
   let col = col('.')
-  call s:DebugLog(printf('Accept: lnum=%d col=%d redundant_after=%d lines=%s', lnum, col, redundant_after, string(lines)))
   call timer_start(0, {-> vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, redundant_after)})
   return ''
 endfunction
@@ -542,7 +541,6 @@ function! vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, ...) abort
   let current_line = getline(a:lnum)
   let before = a:col > 1 ? current_line[: a:col - 2] : ''
   let after = strpart(current_line, a:col - 1 + redundant_after)
-  call s:DebugLog(printf('InsertAcceptedLines: lnum=%d col=%d redundant_after=%d current_line=%s before=%s after=%s', a:lnum, a:col, redundant_after, string(current_line), string(before), string(after)))
   let new_first_line = before . a:lines[0]
   if len(a:lines) == 1
     call setline(a:lnum, new_first_line . after)
@@ -744,24 +742,6 @@ function! vim_ai_autocomplete#DescribeCompletionFailure(provider, status, raw_ou
   return ''
 endfunction
 
-" DEBUG TEMPORARIO (2026-07-21) -- investigando bug intermitente reportado
-" pelo Alberto: par de parenteses "sobra" ao aceitar completion pra
-" def quicksort()/mergesort() com cursor na posicao natural do auto-pairs.
-" Simulacao sintetica com resposta fixa da API NAO reproduziu (logica de
-" CountRedundantAfterChars/ComputeTextOverlapLength correta pros inputs
-" testados) -- suspeita de variacao no INPUT real (timing/resposta da API),
-" nao um bug deterministico de logica. Ativar com
-" `let g:vim_ai_autocomplete_debug = 1` pra gravar os dados reais na proxima
-" reproducao. REMOVER (esta funcao + todas as chamadas de s:DebugLog) assim
-" que o bug for resolvido -- nao e pra ficar no codigo publicado.
-function! s:DebugLog(msg) abort
-  if !get(g:, 'vim_ai_autocomplete_debug', 0)
-    return
-  endif
-  let logfile = get(g:, 'vim_ai_autocomplete_debug_log', '/tmp/vim_ai_autocomplete_debug.log')
-  call writefile(['[' . strftime('%H:%M:%S') . '] ' . a:msg], logfile, 'a')
-endfunction
-
 let s:last_completion_error = ''
 
 function! s:WarnCompletionFailure(provider, status, raw_output) abort
@@ -810,12 +790,9 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
     " real, reportado pelo Alberto: "o vermelho nao aparece nem com o
     " cinza ja escrito" (o cinza tinha sido ajustado por esse mecanismo,
     " mas o real nunca ficava marcado porque eram tratamentos diferentes).
-    call s:DebugLog(printf('OnExit: before_cursor=%s a:after=%s raw_lines=%s', string(before_cursor), string(a:after), string(lines)))
     let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
-    call s:DebugLog(printf('OnExit: redundant_after(struct)=%d', redundant_after))
     let remaining_after = strpart(a:after, redundant_after)
     let redundant_after += vim_ai_autocomplete#ComputeTextOverlapLength(lines, remaining_after)
-    call s:DebugLog(printf('OnExit: redundant_after(struct+overlap)=%d', redundant_after))
     " a:after pode atravessar VARIAS linhas reais do buffer (RequestCompletion
     " manda ate 20 linhas abaixo do cursor pro prompt) -- mas o highlight
     " (prop_add com 'length') e o Accept() (strpart na linha atual) so
@@ -825,7 +802,6 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
     " linhas existentes) -- escopo conhecido, nao coberto.
     let current_line_remainder = strpart(current_line, a:col - 1)
     let redundant_after = min([redundant_after, len(current_line_remainder)])
-    call s:DebugLog(printf('OnExit: redundant_after(final, capped)=%d current_line=%s a:lnum=%d a:col=%d cursor_now=(%d,%d)', redundant_after, string(current_line), a:lnum, a:col, line('.'), col('.')))
     let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
     call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
   else
