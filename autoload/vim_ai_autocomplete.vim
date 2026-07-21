@@ -142,64 +142,24 @@ function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_t
   return n
 endfunction
 
-function! vim_ai_autocomplete#BuildClaudeCommand(context, model, has_ant_authenticated, api_key) abort
+" `ant` (CLI oficial da Anthropic pro Developer Platform, OAuth) cobra do
+" MESMO credito de API pago por token que uma ANTHROPIC_API_KEY estatica --
+" nao da acesso ao credito incluso da assinatura Claude Pro/Max (esse e um
+" produto separado, Claude.ai/Claude Code, com seu proprio sistema de uso).
+" Removido daqui 2026-07-20 (Alberto: "visto que o ant e inutil aqui") --
+" so trocava a forma de autenticar, sem nenhuma vantagem de billing pro
+" caso de uso deste plugin. Sempre usa a key estatica agora.
+function! vim_ai_autocomplete#BuildClaudeCommand(context, model, api_key) abort
   let body = vim_ai_autocomplete#BuildClaudeRequest(a:context, a:model)
-  if a:has_ant_authenticated
-    return {'cmd': ['ant', 'messages', 'create', '--model', a:model, '--max-tokens', '256', '--format', 'json'], 'stdin': body}
-  else
-    return {'cmd': ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
-          \ '-H', 'x-api-key: ' . a:api_key,
-          \ '-H', 'anthropic-version: 2023-06-01',
-          \ '-H', 'Content-Type: application/json', '-d', body], 'stdin': ''}
-  endif
+  return ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
+        \ '-H', 'x-api-key: ' . a:api_key,
+        \ '-H', 'anthropic-version: 2023-06-01',
+        \ '-H', 'Content-Type: application/json', '-d', body]
 endfunction
 
-function! vim_ai_autocomplete#RunWithoutAnthropicKey(Fn) abort
-  let had_key = exists('$ANTHROPIC_API_KEY')
-  let saved = had_key ? $ANTHROPIC_API_KEY : ''
-  unlet $ANTHROPIC_API_KEY
-  try
-    let result = a:Fn()
-  finally
-    if had_key
-      let $ANTHROPIC_API_KEY = saved
-    endif
-  endtry
-  return result
-endfunction
-
-let s:ant_authenticated = 0
-let s:ant_auth_job = v:null
-let s:ant_auth_output = []
-let s:ant_auth_failure_message = ''
-
-function! vim_ai_autocomplete#CheckAntAuth() abort
-  if !executable('ant')
-    return
-  endif
-  call vim_ai_autocomplete#RunWithoutAnthropicKey({-> s:StartAntAuthCheckJob()})
-endfunction
-
-function! s:StartAntAuthCheckJob() abort
-  let s:ant_auth_output = []
-  let s:ant_auth_job = job_start(['ant', 'messages', 'create', '--model', 'claude-sonnet-4-5-20250929', '--max-tokens', '1', '--format', 'json'], {
-        \ 'exit_cb': function('s:OnAntAuthCheckExit'),
-        \ 'out_cb': {ch, msg -> add(s:ant_auth_output, msg)},
-        \ 'out_mode': 'raw',
-        \ })
-  call ch_sendraw(job_getchannel(s:ant_auth_job), '{"model":"claude-sonnet-4-5-20250929","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
-  call ch_close_in(job_getchannel(s:ant_auth_job))
-  return s:ant_auth_job
-endfunction
-
-" Distingue login ausente de outras falhas (ex: credito de API esgotado) --
-" antes disparava a mesma mensagem "nao autenticado" pra qualquer status !=
-" 0, o que e enganoso quando o ant JA esta logado mas a chamada falhou por
-" outro motivo (achado real: "Your credit balance is too low", que nao tem
-" nada a ver com login).
 " Extrai a mensagem de erro de uma resposta JSON de erro da API (formato
-" comum entre Gemini, Claude e `ant messages create`: {"error": {"message":
-" ...}}). Retorna '' se nao for JSON, ou nao tiver esse formato.
+" comum entre Gemini e Claude: {"error": {"message": ...}}). Retorna '' se
+" nao for JSON, ou nao tiver esse formato.
 function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   try
     let data = json_decode(a:raw_output)
@@ -209,28 +169,6 @@ function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   catch
   endtry
   return ''
-endfunction
-
-function! vim_ai_autocomplete#DescribeAntAuthFailure(raw_output) abort
-  let message = vim_ai_autocomplete#ExtractApiErrorMessage(a:raw_output)
-  if message =~? 'credit balance\|purchase credits\|billing'
-    return 'vim-ai-autocomplete: ant autenticado, mas sem credito de API (' . message . ') -- ver console.anthropic.com > Plans & Billing'
-  elseif empty(message) || message =~? 'authenticat\|unauthorized\|invalid.*api.*key\|not logged\|please run'
-    return 'vim-ai-autocomplete: ant instalado mas nao autenticado -- rode "ant auth login" pra usar credito da assinatura Claude'
-  else
-    return 'vim-ai-autocomplete: ant messages create falhou -- ' . message
-  endif
-endfunction
-
-function! s:OnAntAuthCheckExit(job, status) abort
-  let s:ant_authenticated = (a:status == 0)
-  if s:ant_authenticated
-    let s:ant_auth_failure_message = ''
-    call vim_ai_autocomplete#SetupProviderToggle(!empty($GEMINI_API_KEY), 1)
-  else
-    let s:ant_auth_failure_message = vim_ai_autocomplete#DescribeAntAuthFailure(join(s:ant_auth_output, ''))
-    echomsg s:ant_auth_failure_message
-  endif
 endfunction
 
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
@@ -460,18 +398,6 @@ endfunction
 function! vim_ai_autocomplete#ToggleProvider() abort
   let g:vim_ai_autocomplete_provider = g:vim_ai_autocomplete_provider ==# 'gemini' ? 'claude' : 'gemini'
   echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
-  " avisa na hora se ja sabemos que o ant esta com problema (ex: credito
-  " zerado) -- antes so descobria isso na primeira tentativa de completion
-  " (achado real, reportado pelo Alberto: "o erro da anthropic apareceu ao
-  " abrir o vim -- queria ao alternar pro claude tbm"). So cobre o caminho
-  " do ant (verificado no VimEnter); se so ANTHROPIC_API_KEY estatica
-  " estiver em uso, a falha aparece no primeiro completion mesmo, via
-  " s:WarnCompletionFailure.
-  if g:vim_ai_autocomplete_provider ==# 'claude' && !s:ant_authenticated && !empty(s:ant_auth_failure_message)
-    echohl WarningMsg
-    echomsg s:ant_auth_failure_message
-    echohl None
-  endif
 endfunction
 
 let s:timer_id = -1
@@ -503,7 +429,7 @@ endfunction
 
 function! vim_ai_autocomplete#RequestCompletion() abort
   let has_gemini = !empty($GEMINI_API_KEY)
-  let has_claude = s:ant_authenticated || !empty($ANTHROPIC_API_KEY)
+  let has_claude = !empty($ANTHROPIC_API_KEY)
   let [default_provider, level, _] = vim_ai_autocomplete#ResolveProvider(has_gemini, has_claude)
   if level ==# 'error'
     return
@@ -518,15 +444,12 @@ function! vim_ai_autocomplete#RequestCompletion() abort
         \ lines_before_full, getline('.'), col('.'), lines_after_full)
   let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
 
-  let stdin_body = ''
   if provider ==# 'gemini'
     let body = vim_ai_autocomplete#BuildGeminiRequest(context)
     let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=' . $GEMINI_API_KEY
     let cmd = ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
   else
-    let cmd_info = vim_ai_autocomplete#BuildClaudeCommand(context, 'claude-sonnet-4-5-20250929', s:ant_authenticated, $ANTHROPIC_API_KEY)
-    let cmd = cmd_info.cmd
-    let stdin_body = cmd_info.stdin
+    let cmd = vim_ai_autocomplete#BuildClaudeCommand(context, 'claude-sonnet-4-5-20250929', $ANTHROPIC_API_KEY)
   endif
 
   let s:gen += 1
@@ -543,15 +466,7 @@ function! vim_ai_autocomplete#RequestCompletion() abort
         \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:bufnr, l:lnum, l:col, l:after)},
         \ 'out_mode': 'raw',
         \ }
-
-  if !empty(stdin_body)
-    let opts.in_io = 'pipe'
-    let job = vim_ai_autocomplete#RunWithoutAnthropicKey({-> job_start(cmd, opts)})
-    call ch_sendraw(job_getchannel(job), stdin_body)
-    call ch_close_in(job_getchannel(job))
-  else
-    call job_start(cmd, opts)
-  endif
+  call job_start(cmd, opts)
 endfunction
 
 " Antes, qualquer falha (exit != 0, ou resposta de erro da API) resultava em
