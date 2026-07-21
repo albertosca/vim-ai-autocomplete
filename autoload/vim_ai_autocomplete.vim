@@ -212,6 +212,48 @@ function! vim_ai_autocomplete#BuildClaudeCommand(context, model, api_key) abort
         \ '-H', 'Content-Type: application/json', '-d', body]
 endfunction
 
+" Espelha BuildClaudeCommand -- antes o Gemini montava o comando curl
+" inline dentro de RequestCompletion, sem funcao propria (inconsistente
+" com o Claude). Extraida pra ter uma interface uniforme entre familias
+" (build_command(context, model_id, api_key) -> cmd), usada por
+" FamilyHandler() abaixo.
+function! vim_ai_autocomplete#BuildGeminiCommand(context, model_id, api_key) abort
+  let body = vim_ai_autocomplete#BuildGeminiRequest(a:context)
+  let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' . a:model_id . ':generateContent?key=' . a:api_key
+  return ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
+endfunction
+
+" Cada familia de API implementa duas operacoes com assinatura uniforme:
+" build_command(context, model_id, api_key) -> lista pro job_start
+" parse_response(body) -> lista de linhas da sugestao
+" Adicionar uma familia de API nova (ex: OpenAI) exige implementar essas
+" duas funcoes e registrar aqui -- e o "escape hatch" pra APIs muito
+" diferentes de Gemini/Anthropic (ver spec, secao "Abordagens consideradas").
+"
+" O dict e montado DENTRO da funcao (nao como `let` de topo de script) de
+" proposito: `function('vim_ai_autocomplete#ParseGeminiResponse')` etc
+" precisam ser avaliados numa chamada, DEPOIS que o arquivo inteiro ja
+" carregou -- testado ao vivo (vim -N -es): um `let` de topo de script
+" executa durante o UNICO passe de sourcing do arquivo, entao se essa
+" linha vier ANTES da definicao textual de ParseGeminiResponse (que hoje
+" fica mais abaixo no arquivo), function() nao lanca erro nenhum mas
+" devolve um valor NAO-callable (silencioso -- confirmado com
+" `E1085: Not a callable type` so na hora de chamar). Montando o dict
+" dentro do corpo da funcao, so roda quando FamilyHandler() e chamada de
+" verdade -- nesse momento o autoload ja carregou o arquivo inteiro (e' a
+" propria chamada que dispara o carregamento, se ainda nao tiver
+" carregado), entao todas as funcoes ja existem de verdade.
+function! vim_ai_autocomplete#FamilyHandler(family) abort
+  let handlers = {
+        \ 'gemini': {'build_command': function('vim_ai_autocomplete#BuildGeminiCommand'), 'parse_response': function('vim_ai_autocomplete#ParseGeminiResponse')},
+        \ 'anthropic': {'build_command': function('vim_ai_autocomplete#BuildClaudeCommand'), 'parse_response': function('vim_ai_autocomplete#ParseClaudeResponse')},
+        \ }
+  if !has_key(handlers, a:family)
+    throw 'vim-ai-autocomplete: familia desconhecida "' . a:family . '"'
+  endif
+  return handlers[a:family]
+endfunction
+
 " Extrai a mensagem de erro de uma resposta JSON de erro da API (formato
 " comum entre Gemini e Claude: {"error": {"message": ...}}). Retorna '' se
 " nao for JSON, ou nao tiver esse formato.
