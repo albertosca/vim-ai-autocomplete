@@ -25,14 +25,63 @@ function! vim_ai_autocomplete#BuildContext(lines_before, lines_after, max_chars)
   return {'before': before, 'after': after}
 endfunction
 
+" Prompt estilo FIM (fill-in-the-middle): antes so mandavamos context.before,
+" entao o modelo nao tinha como saber que ja existe texto depois do cursor
+" (ex: o ")" que o auto-pairs ja inseriu ao abrir o parenteses) -- ele gerava
+" uma sugestao "as cegas" com seu proprio fechamento, e o Accept() preservava
+" o texto real depois do cursor tambem, duplicando (achado real, reportado
+" pelo Alberto: "empurra o caractere pos la pra depois da sugestao").
+" Confirmado com chamada real: SEM o "DEPOIS DO CURSOR" o modelo devolve
+" 'x):\n    return x * 2' pra "def foo(" (fecha o proprio parenteses); COM,
+" devolve so 'x, y' (sem duplicar). A instrucao sozinha nao e 100%
+" confiavel (outro teste real mostrou o modelo repetindo o sufixo inteiro
+" 3/3 vezes) -- por isso tambem existe TrimSuggestionOverlapWithAfter()
+" como rede de seguranca no pos-processamento.
 function! vim_ai_autocomplete#BuildGeminiRequest(context) abort
-  let prompt = "Complete o codigo a seguir. Responda SOMENTE com a continuacao do codigo, sem explicacao, sem markdown.\n\n" . a:context.before
+  let prompt = "Complete o codigo a seguir. O cursor esta entre o texto ANTES e o texto DEPOIS, que ja existem no buffer. Responda SOMENTE com o texto que deve ser inserido ENTRE eles -- nao repita nada que ja aparece em ANTES ou DEPOIS. Sem explicacao, sem markdown.\n\nANTES DO CURSOR:\n" . a:context.before . "\n\nDEPOIS DO CURSOR:\n" . a:context.after
   return json_encode({'contents': [{'parts': [{'text': prompt}]}]})
 endfunction
 
 function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
-  let prompt = "Complete o codigo a seguir. Responda SOMENTE com a continuacao do codigo, sem explicacao, sem markdown.\n\n" . a:context.before
+  let prompt = "Complete o codigo a seguir. O cursor esta entre o texto ANTES e o texto DEPOIS, que ja existem no buffer. Responda SOMENTE com o texto que deve ser inserido ENTRE eles -- nao repita nada que ja aparece em ANTES ou DEPOIS. Sem explicacao, sem markdown.\n\nANTES DO CURSOR:\n" . a:context.before . "\n\nDEPOIS DO CURSOR:\n" . a:context.after
   return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
+endfunction
+
+" Rede de seguranca pro prompt FIM acima -- se o modelo mesmo assim repetir
+" (parcial ou totalmente) o texto que ja existe depois do cursor, remove
+" essa sobreposicao da sugestao. Acha a maior sobreposicao entre o FIM da
+" sugestao e o INICIO do texto depois do cursor e corta ela. Se a sugestao
+" inteira for so essa repeticao (nada de novo pra inserir), retorna lista
+" vazia -- nao [''], que apareceria como uma sugestao fantasma vazia mas
+" "visivel" (IsVisible() conta [''] como visivel).
+function! vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, after_text) abort
+  if empty(a:lines) || empty(a:after_text)
+    return a:lines
+  endif
+  let suggestion_text = join(a:lines, "\n")
+  let max_check = min([len(suggestion_text), len(a:after_text)])
+  let overlap_len = 0
+  let n = max_check
+  while n > 0
+    let suffix = strpart(suggestion_text, len(suggestion_text) - n, n)
+    let prefix = strpart(a:after_text, 0, n)
+    if suffix ==# prefix
+      let overlap_len = n
+      break
+    endif
+    let n -= 1
+  endwhile
+  if overlap_len == 0
+    return a:lines
+  endif
+  let trimmed_text = strpart(suggestion_text, 0, len(suggestion_text) - overlap_len)
+  " se o corte caiu exatamente numa quebra de linha, sobra um "\n" pendurado
+  " no fim -- split() geraria uma linha vazia fantasma extra no resultado.
+  let trimmed_text = substitute(trimmed_text, '\n$', '', '')
+  if empty(trimmed_text)
+    return []
+  endif
+  return split(trimmed_text, "\n", 1)
 endfunction
 
 function! vim_ai_autocomplete#BuildClaudeCommand(context, model, has_ant_authenticated, api_key) abort
@@ -89,15 +138,22 @@ endfunction
 " 0, o que e enganoso quando o ant JA esta logado mas a chamada falhou por
 " outro motivo (achado real: "Your credit balance is too low", que nao tem
 " nada a ver com login).
-function! vim_ai_autocomplete#DescribeAntAuthFailure(raw_output) abort
-  let message = ''
+" Extrai a mensagem de erro de uma resposta JSON de erro da API (formato
+" comum entre Gemini, Claude e `ant messages create`: {"error": {"message":
+" ...}}). Retorna '' se nao for JSON, ou nao tiver esse formato.
+function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   try
     let data = json_decode(a:raw_output)
     if type(data) == v:t_dict
-      let message = get(get(data, 'error', {}), 'message', '')
+      return get(get(data, 'error', {}), 'message', '')
     endif
   catch
   endtry
+  return ''
+endfunction
+
+function! vim_ai_autocomplete#DescribeAntAuthFailure(raw_output) abort
+  let message = vim_ai_autocomplete#ExtractApiErrorMessage(a:raw_output)
   if message =~? 'credit balance\|purchase credits\|billing'
     return 'vim-ai-autocomplete: ant autenticado, mas sem credito de API (' . message . ') -- ver console.anthropic.com > Plans & Billing'
   elseif empty(message) || message =~? 'authenticat\|unauthorized\|invalid.*api.*key\|not logged\|please run'
@@ -382,10 +438,11 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let l:lnum = line('.')
   let l:col = col('.')
   let l:provider = provider
+  let l:after = context.after
 
   let opts = {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
-        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:bufnr, l:lnum, l:col)},
+        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:bufnr, l:lnum, l:col, l:after)},
         \ 'out_mode': 'raw',
         \ }
 
@@ -399,15 +456,44 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   endif
 endfunction
 
-function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col) abort
+" Antes, qualquer falha (exit != 0, ou resposta de erro da API) resultava em
+" nenhuma sugestao aparecer e NENHUM aviso -- achado real, reportado pelo
+" Alberto testando com credito de API zerado: parecia que o autocomplete
+" simplesmente nao fazia nada, sem pista do motivo. Retorna '' quando nao ha
+" nada de errado pra reportar (resposta vazia legitima, ex: cursor no fim
+" de um arquivo completo).
+function! vim_ai_autocomplete#DescribeCompletionFailure(provider, status, raw_output) abort
+  let message = vim_ai_autocomplete#ExtractApiErrorMessage(a:raw_output)
+  if !empty(message)
+    return printf('vim-ai-autocomplete (%s): %s', a:provider, message)
+  endif
+  if a:status != 0
+    return printf('vim-ai-autocomplete (%s): request falhou (exit %d), sem detalhe na resposta', a:provider, a:status)
+  endif
+  return ''
+endfunction
+
+let s:last_completion_error = ''
+
+function! s:WarnCompletionFailure(provider, status, raw_output) abort
+  let message = vim_ai_autocomplete#DescribeCompletionFailure(a:provider, a:status, a:raw_output)
+  if empty(message) || message ==# s:last_completion_error
+    return
+  endif
+  let s:last_completion_error = message
+  echohl WarningMsg
+  echomsg message
+  echohl None
+endfunction
+
+function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col, after) abort
   if a:gen != s:gen
     return
   endif
-  if a:status != 0
-    return
-  endif
   " descarta se o cursor ja se moveu desde que o request foi feito
-  " (resposta chegou tarde demais, contexto mudou)
+  " (resposta chegou tarde demais, contexto mudou) -- vale tambem pro aviso
+  " de erro, senao um erro de um request velho poderia aparecer fora de
+  " contexto depois que o usuario ja seguiu em frente.
   if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
     return
   endif
@@ -416,9 +502,15 @@ function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col) abort
         \ ? vim_ai_autocomplete#ParseGeminiResponse(body)
         \ : vim_ai_autocomplete#ParseClaudeResponse(body)
   if !empty(lines)
-    let current_line = getline(a:lnum)
-    let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
-    let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
-    call vim_ai_autocomplete#ShowSuggestion(lines)
+    let s:last_completion_error = ''
+    let lines = vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, a:after)
+    if !empty(lines)
+      let current_line = getline(a:lnum)
+      let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
+      let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
+      call vim_ai_autocomplete#ShowSuggestion(lines)
+    endif
+  else
+    call s:WarnCompletionFailure(a:provider, a:status, body)
   endif
 endfunction
