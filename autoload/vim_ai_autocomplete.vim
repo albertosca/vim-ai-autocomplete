@@ -593,12 +593,28 @@ function! s:OnExit(gen, chunks, status, provider, bufnr, lnum, col, after) abort
         \ : vim_ai_autocomplete#ParseClaudeResponse(body)
   if !empty(lines)
     let s:last_completion_error = ''
-    let lines = vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, a:after)
+    let current_line = getline(a:lnum)
+    let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
+    " CountRedundantAfterChars PRECISA rodar com a sugestao ORIGINAL, antes
+    " de qualquer trim -- achado real, reportado pelo Alberto ("def
+    " fibonacci(" -- o ultimo parenteses nao aparecia vermelho): a
+    " sugestao real fecha uma chamada INTERNA (fibonacci(n - 2)) cujo ")"
+    " final coincide textualmente com o "depois" do cursor (so um ")").
+    " TrimSuggestionOverlapWithAfter, rodando ANTES, cortava esse ")"
+    " achando que era sobreposicao com o "depois" -- corrompendo a
+    " sugestao (perdia o fechamento da chamada interna) e zerando o
+    " calculo de redundancia (a pilha de brackets nunca fechava de volta,
+    " entao CountRedundantAfterChars nao via diferenca de profundidade).
+    " Corrigido computando a redundancia estrutural PRIMEIRO (com o texto
+    " intacto), e so entao rodando o trim de sobreposicao textual contra o
+    " que SOBRA de "depois" (excluindo o que ja foi contabilizado como
+    " redundante) -- assim o trim nao pode mais corromper um fechamento
+    " legitimo que a analise de brackets ja atribuiu corretamente.
+    let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
+    let remaining_after = strpart(a:after, redundant_after)
+    let lines = vim_ai_autocomplete#TrimSuggestionOverlapWithAfter(lines, remaining_after)
     if !empty(lines)
-      let current_line = getline(a:lnum)
-      let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
       let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
-      let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
       call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
     endif
   else
