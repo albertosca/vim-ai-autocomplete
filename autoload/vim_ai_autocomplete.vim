@@ -510,8 +510,11 @@ function! vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, ...) abort
   endif
 endfunction
 
-function! vim_ai_autocomplete#SetupProviderToggle(has_gemini, has_claude) abort
-  if a:has_gemini && a:has_claude
+" active_models: lista JA FILTRADA (ver vim_ai_autocomplete#ActiveModels()) --
+" so registra ,pr e o comando :VimAiAutocompleteModel com 2+ modelos ativos
+" (mesma regra de hoje -- antes "as duas keys presentes", generalizada).
+function! vim_ai_autocomplete#SetupProviderToggle(active_models) abort
+  if len(a:active_models) >= 2
     " <leader>pr, nao <leader>ap nem <leader>pv: <leader>a ja e code actions
     " do CoC (configs.vim) -- <leader>ap compartilhava prefixo com um
     " mapeamento completo existente (achado real, reportado pelo Alberto).
@@ -519,57 +522,77 @@ function! vim_ai_autocomplete#SetupProviderToggle(has_gemini, has_claude) abort
     " do lado Neovim (nvim/lua/user/venv.lua) -- mesma tecla escolhida nos
     " dois lados por consistencia, entao precisa ser livre nos dois.
     nnoremap <silent> <leader>pr :call vim_ai_autocomplete#ToggleProvider()<CR>
+    command! -nargs=1 -complete=customlist,vim_ai_autocomplete#CompleteModelNames VimAiAutocompleteModel call vim_ai_autocomplete#SelectModel(<q-args>)
   endif
 endfunction
 
 function! vim_ai_autocomplete#ToggleProvider() abort
-  let g:vim_ai_autocomplete_provider = g:vim_ai_autocomplete_provider ==# 'gemini' ? 'claude' : 'gemini'
+  let active = vim_ai_autocomplete#ActiveModels()
+  let names = map(copy(active), 'v:val.name')
+  let idx = index(names, g:vim_ai_autocomplete_provider)
+  let next_idx = (idx + 1) % len(names)
+  let previous = g:vim_ai_autocomplete_provider
+  let g:vim_ai_autocomplete_provider = names[next_idx]
   echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
-  " avisa na hora se a key estatica do Claude nao funciona (billing, key
-  " invalida, etc) -- sem isso, o usuario so descobre no primeiro completion
-  " de verdade (achado real, reportado pelo Alberto depois de remover o
-  " ant: "agora quando troco de provider nao tem mensagem de erro alguma").
-  " Chamada leve (max_tokens=1), disparada so ao alternar PRA claude, nao
-  " em todo VimEnter como o antigo CheckAntAuth fazia.
-  if g:vim_ai_autocomplete_provider ==# 'claude'
-    call s:CheckClaudeKey()
-  endif
+  call s:CheckModelKey(g:vim_ai_autocomplete_provider, previous)
 endfunction
 
-function! s:CheckClaudeKey() abort
-  if empty($ANTHROPIC_API_KEY)
+function! vim_ai_autocomplete#SelectModel(name) abort
+  let active = vim_ai_autocomplete#ActiveModels()
+  let model = vim_ai_autocomplete#FindModelByName(active, a:name)
+  if model is v:null
+    echoerr 'vim-ai-autocomplete: modelo "' . a:name . '" nao existe ou nao esta ativo (sem API key)'
     return
   endif
-  let body = json_encode({'model': 'claude-sonnet-4-5-20250929', 'max_tokens': 1,
-        \ 'messages': [{'role': 'user', 'content': 'hi'}]})
-  let cmd = ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
-        \ '-H', 'x-api-key: ' . $ANTHROPIC_API_KEY,
-        \ '-H', 'anthropic-version: 2023-06-01',
-        \ '-H', 'Content-Type: application/json', '-d', body]
+  let previous = g:vim_ai_autocomplete_provider
+  let g:vim_ai_autocomplete_provider = a:name
+  echom 'vim-ai-autocomplete: provider agora e ' . a:name
+  call s:CheckModelKey(a:name, previous)
+endfunction
+
+function! vim_ai_autocomplete#CompleteModelNames(arglead, cmdline, cursorpos) abort
+  let active = vim_ai_autocomplete#ActiveModels()
+  let names = map(copy(active), 'v:val.name')
+  return filter(names, 'v:val =~# "^" . a:arglead')
+endfunction
+
+" Generaliza s:CheckClaudeKey/s:OnClaudeKeyCheckExit (antes so existia pro
+" Claude, fixo). Dispara uma chamada leve (contexto minimo "hi") pro
+" modelo pra qual acabou de trocar; se der erro, avisa e volta pro modelo
+" ANTERIOR (nao mais fixo em "gemini") -- achado real, reportado pelo
+" Alberto: "alem do aviso tem que destrocar pro gemini" (agora generico
+" pra qualquer familia/modelo).
+function! s:CheckModelKey(name, previous_name) abort
+  let model = vim_ai_autocomplete#FindModelByName(vim_ai_autocomplete#ActiveModels(), a:name)
+  if model is v:null
+    return
+  endif
+  let api_key = getenv(model.api_key_env)
+  let handler = vim_ai_autocomplete#FamilyHandler(model.family)
+  let cmd = handler.build_command({'before': 'hi', 'after': ''}, model.model_id, api_key)
   let l:chunks = []
+  let l:checked_name = a:name
+  let l:previous_name = a:previous_name
   call job_start(cmd, {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
-        \ 'exit_cb': {job, status -> s:OnClaudeKeyCheckExit(status, l:chunks)},
+        \ 'exit_cb': {job, status -> s:OnModelKeyCheckExit(l:checked_name, l:previous_name, l:chunks)},
         \ 'out_mode': 'raw',
         \ })
 endfunction
 
-function! s:OnClaudeKeyCheckExit(status, chunks) abort
+function! s:OnModelKeyCheckExit(checked_name, previous_name, chunks) abort
   let message = vim_ai_autocomplete#ExtractApiErrorMessage(join(a:chunks, ''))
   if empty(message)
     return
   endif
-  " Claude nao funciona -- volta pro Gemini sozinho em vez de deixar o
-  " usuario preso num provider que sabidamente vai falhar em toda
-  " sugestao (achado real, reportado pelo Alberto: "alem do aviso tem que
-  " destrocar pro gemini"). So reverte se o usuario ainda estiver em
-  " claude -- se ja alternou de volta manualmente antes desta checagem
-  " assincrona terminar, nao mexe.
-  if g:vim_ai_autocomplete_provider ==# 'claude'
-    let g:vim_ai_autocomplete_provider = 'gemini'
+  " so reverte se o usuario ainda estiver no modelo que falhou -- se ja
+  " trocou de novo manualmente antes desta checagem assincrona terminar,
+  " nao mexe (mesma logica de antes, generalizada).
+  if g:vim_ai_autocomplete_provider ==# a:checked_name
+    let g:vim_ai_autocomplete_provider = a:previous_name
   endif
   echohl WarningMsg
-  echomsg 'vim-ai-autocomplete (claude): ' . message . ' -- voltando pro gemini'
+  echomsg printf('vim-ai-autocomplete (%s): %s -- voltando pro %s', a:checked_name, message, a:previous_name)
   echohl None
 endfunction
 
