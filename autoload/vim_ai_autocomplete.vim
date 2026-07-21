@@ -201,18 +201,54 @@ function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_t
   let depth_before = len(stack)
   let stack = s:AdvanceBracketStack(stack, a:suggestion_text)
   let redundant = max([0, depth_before - len(stack)])
-  if redundant == 0
+  if redundant > 0
+    " so descarta se "depois" realmente comecar com essa quantidade de
+    " fechamentos -- senao pode nao ser o mesmo bracket/aspa (edicao
+    " incomum), melhor nao arriscar apagar algo que nao e obviamente
+    " redundante.
+    let n = 0
+    while n < redundant && n < len(a:after_text) && stridx(closers, a:after_text[n]) >= 0
+      let n += 1
+    endwhile
+    return n
+  endif
+  return s:CountLeadingTrivialPairRedundancy(a:suggestion_text, a:after_text)
+endfunction
+
+" Cobre o caso em que o cursor esta ANTES do proprio abre-parenteses (nao
+" DENTRO do par ja aberto pelo auto-pairs) -- "antes" nao tem nenhum
+" bracket/aspa pendente (depth_before == 0), entao o calculo estrutural
+" acima nunca acha nada pra fechar, e o par vazio intacto em "depois" (ex:
+" "()" do auto-pairs, sem nada digitado dentro ainda) nao bate textualmente
+" com o FIM da sugestao (a sugestao termina em fechamento ")", "depois"
+" comeca com abertura "(" -- caracteres diferentes, ComputeTextOverlapLength
+" tambem nao acha nada). A sugestao, sem saber que esse par vazio existe,
+" escreve sua PROPRIA versao completa do par (ex: "(arr):" pra
+" "def quicksort") -- o par vazio original fica orfao no final
+" ("def quicksort(arr):()"). Achado real, reportado pelo Alberto 2026-07-21
+" (log de debug g:vim_ai_autocomplete_debug em InsertAcceptedLines).
+" So descarta se a sugestao de fato USA esse mesmo tipo de bracket/aspa em
+" algum lugar -- mesmo espirito conservador do bloco acima, evita apagar um
+" par vazio que por coincidencia esta logo apos o cursor mas nao tem
+" nenhuma relacao com o que a sugestao escreveu.
+function! s:CountLeadingTrivialPairRedundancy(suggestion_text, after_text) abort
+  let pairs = {'(': ')', '[': ']', '{': '}'}
+  let quotes = '"''`'
+  if len(a:after_text) < 2
     return 0
   endif
-  " so descarta se "depois" realmente comecar com essa quantidade de
-  " fechamentos -- senao pode nao ser o mesmo bracket/aspa (edicao
-  " incomum), melhor nao arriscar apagar algo que nao e obviamente
-  " redundante.
-  let n = 0
-  while n < redundant && n < len(a:after_text) && stridx(closers, a:after_text[n]) >= 0
-    let n += 1
-  endwhile
-  return n
+  let opener = a:after_text[0]
+  if has_key(pairs, opener)
+    let closer = pairs[opener]
+  elseif stridx(quotes, opener) >= 0
+    let closer = opener
+  else
+    return 0
+  endif
+  if a:after_text[1] !=# closer
+    return 0
+  endif
+  return stridx(a:suggestion_text, opener) >= 0 ? 2 : 0
 endfunction
 
 " `ant` (CLI oficial da Anthropic pro Developer Platform, OAuth) cobra do
