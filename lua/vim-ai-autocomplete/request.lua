@@ -78,6 +78,11 @@ function M.request_completion()
   local lines_before, lines_after = context_mod.split_lines_at_cursor(
     lines_before_full, vim.fn.getline('.'), cur_col, lines_after_full)
   local context = context_mod.build_context(lines_before, lines_after, 16000)
+  -- captura o after CRU (buffer) ANTES de qualquer augmentacao de LSP --
+  -- redundancy.count_redundant_after_chars/compute_text_overlap_length em
+  -- on_exit precisam do texto real apos o cursor, nao do prompt context
+  -- (secao "DEFINICOES RELACIONADAS") que so faz sentido no request pra API.
+  local after = context.after
 
   local ok_node, scope_node = pcall(vim.treesitter.get_node, { bufnr = bufnr_now, pos = { cur_lnum - 1, math.max(0, cur_col - 1) } })
   if ok_node and scope_node then
@@ -95,7 +100,6 @@ function M.request_completion()
   local col = vim.fn.col('.')
   local provider = model.name
   local parse_response = handler.parse_response
-  local after = context.after
 
   vim.system(cmd, { text = true }, function(result)
     if result.stdout then

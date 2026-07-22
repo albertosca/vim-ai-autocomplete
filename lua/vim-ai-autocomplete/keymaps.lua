@@ -39,6 +39,7 @@ function M.setup_esc_wrap()
   if original and original.lhs then
     esc_fallback.rhs = original.rhs or '\27'
     esc_fallback.is_expr = original.expr == 1
+    esc_fallback.callback = original.callback
   end
   vim.keymap.set('i', '<Esc>', M.esc_handler, { expr = true, silent = true })
 end
@@ -47,6 +48,10 @@ function M.esc_handler()
   if ghost_text.is_visible() then
     ghost_text.clear_suggestion()
     return ''
+  end
+  if esc_fallback.callback then
+    local result = esc_fallback.callback()
+    return esc_fallback.is_expr and result or ''
   end
   if esc_fallback.is_expr then
     return vim.api.nvim_eval(esc_fallback.rhs)
