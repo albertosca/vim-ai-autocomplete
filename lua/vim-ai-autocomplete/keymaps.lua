@@ -70,20 +70,20 @@ function M.toggle_auto_trigger()
 end
 
 -- Generaliza a checagem de key -- dispara uma chamada leve pro modelo pra
--- qual acabou de trocar; se der erro, avisa e volta pro modelo ANTERIOR
--- (mesmo achado do lado Vim, generalizado pra qualquer familia/modelo).
-function M.on_model_key_check_exit(checked_name, previous_name, chunks)
+-- qual acabou de trocar; se der erro, so AVISA -- nao reverte mais pro
+-- modelo anterior (antes revertia automaticamente; mudanca pedida pelo
+-- Alberto 2026-07-22: "quero que a pessoa possa ciclar a vontade", ex:
+-- ,pr repetido pra tentar os modelos seguintes mesmo depois de um aviso de
+-- credito, sem ficar precisando trocar de volta manualmente).
+function M.on_model_key_check_exit(checked_name, chunks)
   local message = family.extract_api_error_message(table.concat(chunks, ''))
   if not message then
     return
   end
-  if vim.g.vim_ai_autocomplete_provider == checked_name then
-    vim.g.vim_ai_autocomplete_provider = previous_name
-  end
-  vim.notify(string.format('vim-ai-autocomplete (%s): %s -- voltando pro %s', checked_name, message, previous_name), vim.log.levels.WARN)
+  vim.notify(string.format('vim-ai-autocomplete (%s): %s', checked_name, message), vim.log.levels.WARN)
 end
 
-function M.check_model_key(name, previous_name)
+function M.check_model_key(name)
   local model = models.find_model_by_name(models.active_models(), name)
   if not model then
     return
@@ -97,7 +97,7 @@ function M.check_model_key(name, previous_name)
       table.insert(chunks, result.stdout)
     end
     vim.schedule(function()
-      M.on_model_key_check_exit(name, previous_name, chunks)
+      M.on_model_key_check_exit(name, chunks)
     end)
   end)
 end
@@ -109,10 +109,9 @@ function M.select_model(name)
     vim.notify('vim-ai-autocomplete: modelo "' .. name .. '" nao existe ou nao esta ativo (sem API key)', vim.log.levels.ERROR)
     return
   end
-  local previous = vim.g.vim_ai_autocomplete_provider
   vim.g.vim_ai_autocomplete_provider = name
   vim.notify('vim-ai-autocomplete: provider agora e ' .. name)
-  M.check_model_key(name, previous)
+  M.check_model_key(name)
 end
 
 function M.toggle_provider()
@@ -128,10 +127,9 @@ function M.toggle_provider()
     end
   end
   local next_idx = (idx % #names) + 1
-  local previous = vim.g.vim_ai_autocomplete_provider
   vim.g.vim_ai_autocomplete_provider = names[next_idx]
   vim.notify('vim-ai-autocomplete: provider agora e ' .. vim.g.vim_ai_autocomplete_provider)
-  M.check_model_key(vim.g.vim_ai_autocomplete_provider, previous)
+  M.check_model_key(vim.g.vim_ai_autocomplete_provider)
 end
 
 function M.complete_model_names(arglead)

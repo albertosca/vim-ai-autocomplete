@@ -575,10 +575,9 @@ function! vim_ai_autocomplete#ToggleProvider() abort
   let names = map(copy(active), 'v:val.name')
   let idx = index(names, g:vim_ai_autocomplete_provider)
   let next_idx = (idx + 1) % len(names)
-  let previous = g:vim_ai_autocomplete_provider
   let g:vim_ai_autocomplete_provider = names[next_idx]
   echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
-  call s:CheckModelKey(g:vim_ai_autocomplete_provider, previous)
+  call s:CheckModelKey(g:vim_ai_autocomplete_provider)
 endfunction
 
 function! vim_ai_autocomplete#SelectModel(name) abort
@@ -588,10 +587,9 @@ function! vim_ai_autocomplete#SelectModel(name) abort
     echoerr 'vim-ai-autocomplete: modelo "' . a:name . '" nao existe ou nao esta ativo (sem API key)'
     return
   endif
-  let previous = g:vim_ai_autocomplete_provider
   let g:vim_ai_autocomplete_provider = a:name
   echom 'vim-ai-autocomplete: provider agora e ' . a:name
-  call s:CheckModelKey(a:name, previous)
+  call s:CheckModelKey(a:name)
 endfunction
 
 function! vim_ai_autocomplete#CompleteModelNames(arglead, cmdline, cursorpos) abort
@@ -602,11 +600,12 @@ endfunction
 
 " Generaliza s:CheckClaudeKey/s:OnClaudeKeyCheckExit (antes so existia pro
 " Claude, fixo). Dispara uma chamada leve (contexto minimo "hi") pro
-" modelo pra qual acabou de trocar; se der erro, avisa e volta pro modelo
-" ANTERIOR (nao mais fixo em "gemini") -- achado real, reportado pelo
-" Alberto: "alem do aviso tem que destrocar pro gemini" (agora generico
-" pra qualquer familia/modelo).
-function! s:CheckModelKey(name, previous_name) abort
+" modelo pra qual acabou de trocar; se der erro, so AVISA -- nao reverte
+" mais pro modelo anterior (antes revertia automaticamente; mudanca pedida
+" pelo Alberto 2026-07-22: "quero que a pessoa possa ciclar a vontade", ex:
+" ,pr repetido pra tentar os modelos seguintes mesmo depois de um aviso de
+" credito, sem ficar precisando trocar de volta manualmente).
+function! s:CheckModelKey(name) abort
   let model = vim_ai_autocomplete#FindModelByName(vim_ai_autocomplete#ActiveModels(), a:name)
   if model is v:null
     return
@@ -616,27 +615,20 @@ function! s:CheckModelKey(name, previous_name) abort
   let cmd = handler.build_command({'before': 'hi', 'after': ''}, model.model_id, api_key)
   let l:chunks = []
   let l:checked_name = a:name
-  let l:previous_name = a:previous_name
   call job_start(cmd, {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
-        \ 'exit_cb': {job, status -> s:OnModelKeyCheckExit(l:checked_name, l:previous_name, l:chunks)},
+        \ 'exit_cb': {job, status -> s:OnModelKeyCheckExit(l:checked_name, l:chunks)},
         \ 'out_mode': 'raw',
         \ })
 endfunction
 
-function! s:OnModelKeyCheckExit(checked_name, previous_name, chunks) abort
+function! s:OnModelKeyCheckExit(checked_name, chunks) abort
   let message = vim_ai_autocomplete#ExtractApiErrorMessage(join(a:chunks, ''))
   if empty(message)
     return
   endif
-  " so reverte se o usuario ainda estiver no modelo que falhou -- se ja
-  " trocou de novo manualmente antes desta checagem assincrona terminar,
-  " nao mexe (mesma logica de antes, generalizada).
-  if g:vim_ai_autocomplete_provider ==# a:checked_name
-    let g:vim_ai_autocomplete_provider = a:previous_name
-  endif
   echohl WarningMsg
-  echomsg printf('vim-ai-autocomplete (%s): %s -- voltando pro %s', a:checked_name, message, a:previous_name)
+  echomsg printf('vim-ai-autocomplete (%s): %s', a:checked_name, message)
   echohl None
 endfunction
 
