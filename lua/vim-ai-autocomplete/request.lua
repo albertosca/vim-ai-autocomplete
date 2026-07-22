@@ -67,14 +67,23 @@ function M.request_completion()
   local handler = family.family_handler(model.family)
   local api_key = vim.fn.getenv(model.api_key_env)
 
+  local bufnr_now = vim.api.nvim_get_current_buf()
   local cur_lnum = vim.fn.line('.')
-  local first = math.max(1, cur_lnum - 100)
+  local cur_col = vim.fn.col('.')
+  local scope_start = context_mod.treesitter_scope_start_line(bufnr_now, cur_lnum, cur_col)
+  local first = scope_start or math.max(1, cur_lnum - 100)
   local last = math.min(vim.fn.line('$'), cur_lnum + 20)
   local lines_before_full = vim.fn.getline(first, cur_lnum - 1)
   local lines_after_full = vim.fn.getline(cur_lnum + 1, last)
   local lines_before, lines_after = context_mod.split_lines_at_cursor(
-    lines_before_full, vim.fn.getline('.'), vim.fn.col('.'), lines_after_full)
+    lines_before_full, vim.fn.getline('.'), cur_col, lines_after_full)
   local context = context_mod.build_context(lines_before, lines_after, 16000)
+
+  local ok_node, scope_node = pcall(vim.treesitter.get_node, { bufnr = bufnr_now, pos = { cur_lnum - 1, math.max(0, cur_col - 1) } })
+  if ok_node and scope_node then
+    local definitions = context_mod.lsp_related_definitions(bufnr_now, scope_node, 150)
+    context.after = context.after .. context_mod.build_related_definitions_section(definitions, 10)
+  end
 
   local cmd = handler.build_command(context, model.model_id, api_key)
 
