@@ -322,6 +322,10 @@ function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   return ''
 endfunction
 
+" Candidate bloqueado (filtro de seguranca, finishReason SAFETY/RECITATION)
+" vem SEM "content" ou sem "parts" -- resposta HTTP 200 legitima, so sem
+" sugestao de verdade. Achado real, reportado pelo Alberto 2026-07-22 (smoke
+" test ao vivo do port Neovim): acesso direto sem guarda lancava excecao.
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   try
     let data = json_decode(a:body)
@@ -331,7 +335,15 @@ function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   if type(data) != v:t_dict || !has_key(data, 'candidates') || empty(data.candidates)
     return []
   endif
-  let text = data.candidates[0].content.parts[0].text
+  let candidate = data.candidates[0]
+  if type(candidate) != v:t_dict || type(get(candidate, 'content', v:null)) != v:t_dict
+    return []
+  endif
+  let parts = get(candidate.content, 'parts', [])
+  if type(parts) != v:t_list || empty(parts)
+    return []
+  endif
+  let text = parts[0].text
   return split(text, "\n", 1)
 endfunction
 

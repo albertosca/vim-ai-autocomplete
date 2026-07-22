@@ -45,12 +45,25 @@ function M.build_claude_command(context, model, api_key)
   }
 end
 
+-- Candidate bloqueado (filtro de seguranca, finishReason SAFETY/RECITATION)
+-- vem SEM "content" ou sem "parts" -- resposta HTTP 200 legitima, so sem
+-- sugestao de verdade. Achado real, reportado pelo Alberto 2026-07-22
+-- (smoke test ao vivo): "attempt to index field 'parts' (a nil value)"
+-- quando o acesso direto nao tinha guarda.
 function M.parse_gemini_response(body)
   local ok, data = pcall(vim.json.decode, body)
   if not ok or type(data) ~= 'table' or type(data.candidates) ~= 'table' or #data.candidates == 0 then
     return {}
   end
-  local text = data.candidates[1].content.parts[1].text
+  local candidate = data.candidates[1]
+  if type(candidate) ~= 'table' or type(candidate.content) ~= 'table' then
+    return {}
+  end
+  local parts = candidate.content.parts
+  if type(parts) ~= 'table' or #parts == 0 then
+    return {}
+  end
+  local text = parts[1].text
   return vim.split(text, '\n', { plain = true, trimempty = false })
 end
 
