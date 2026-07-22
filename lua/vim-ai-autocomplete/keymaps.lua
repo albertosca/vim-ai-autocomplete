@@ -25,7 +25,8 @@ function M.tab_handler()
     return ghost_text.accept()
   end
   if tab_fallback.callback then
-    return tab_fallback.callback()
+    local result = tab_fallback.callback()
+    return tab_fallback.is_expr and result or ''
   end
   if tab_fallback.is_expr then
     return vim.api.nvim_eval(tab_fallback.rhs)
