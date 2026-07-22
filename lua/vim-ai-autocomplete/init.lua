@@ -55,6 +55,10 @@ function M.setup()
   local active_models = models.active_models()
   keymaps.setup_provider_toggle(active_models)
 
+  if #active_models >= 2 then
+    vim.keymap.set('n', '<leader>pm', keymaps.open_model_picker, { silent = true, desc = 'vim-ai-autocomplete: pick model' })
+  end
+
   local all_models = vim.g.vim_ai_autocomplete_models or models.default_models()
   local default_name = models.resolve_default_model(all_models, active_models)
   if vim.g.vim_ai_autocomplete_provider == nil and default_name then

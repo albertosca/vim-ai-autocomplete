@@ -156,4 +156,22 @@ function M.setup_provider_toggle(active_models)
   end
 end
 
+-- Extra exclusivo do Neovim: seleciona o modelo via vim.ui.select em vez de
+-- digitar :VimAiAutocompleteModel <nome> de cor. Funciona com Telescope
+-- automaticamente se instalado (Telescope substitui o handler global de
+-- vim.ui.select) -- nao precisamos detectar Telescope, e assim que
+-- vim.ui.select ja funciona por design.
+function M.open_model_picker()
+  local active = models.active_models()
+  local names = {}
+  for _, m in ipairs(active) do
+    table.insert(names, m.name)
+  end
+  vim.ui.select(names, { prompt = 'vim-ai-autocomplete: escolha o modelo' }, function(choice)
+    if choice then
+      M.select_model(choice)
+    end
+  end)
+end
+
 return M
