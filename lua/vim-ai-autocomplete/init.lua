@@ -40,7 +40,20 @@ function M.trigger()
   timer = vim.defer_fn(on_timer, 600)
 end
 
-function M.setup()
+-- opts (opcional): {models = lista_de_modelos, auto_trigger = boolean}.
+-- Acucar sobre os mesmos vim.g.* -- nunca um caminho de config paralelo.
+-- Quem configura via vim.g direto continua funcionando identico; opts e'
+-- so uma forma mais idiomatica (estilo lazy.nvim opts={}) de escrever a
+-- mesma coisa. setup() sem argumento continua igual a antes.
+function M.setup(opts)
+  opts = opts or {}
+  if opts.models ~= nil then
+    vim.g.vim_ai_autocomplete_models = opts.models
+  end
+  if opts.auto_trigger ~= nil then
+    vim.g.vim_ai_autocomplete_auto_trigger = opts.auto_trigger and 1 or 0
+  end
+
   if vim.g.vim_ai_autocomplete_auto_trigger == nil then
     vim.g.vim_ai_autocomplete_auto_trigger = 1
   end
