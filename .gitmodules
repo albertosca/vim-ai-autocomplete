@@ -1,0 +1,6 @@
+[submodule "test/vendor/vader.vim"]
+	path = test/vendor/vader.vim
+	url = https://github.com/junegunn/vader.vim
+[submodule "test/vendor/plenary.nvim"]
+	path = test/vendor/plenary.nvim
+	url = https://github.com/nvim-lua/plenary.nvim
