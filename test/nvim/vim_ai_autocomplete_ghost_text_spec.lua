@@ -1,0 +1,50 @@
+local ghost_text = require('vim-ai-autocomplete.ghost_text')
+
+describe("vim-ai-autocomplete.ghost_text", function()
+  local buf
+
+  before_each(function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    ghost_text.clear_suggestion()
+  end)
+
+  after_each(function()
+    ghost_text.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("show_suggestion torna a sugestao visivel", function()
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def foo()' })
+    vim.api.nvim_win_set_cursor(0, { 1, 8 })
+    ghost_text.show_suggestion({ 'x):', '    return x' }, 0)
+    assert.is_true(ghost_text.is_visible())
+    assert.are.same({ 'x):', '    return x' }, ghost_text.current_suggestion())
+  end)
+
+  it("clear_suggestion esconde a sugestao", function()
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def foo()' })
+    vim.api.nvim_win_set_cursor(0, { 1, 8 })
+    ghost_text.show_suggestion({ 'x)' }, 0)
+    ghost_text.clear_suggestion()
+    assert.is_false(ghost_text.is_visible())
+  end)
+
+  it("accept insere a sugestao no buffer, descartando o trecho redundante", function()
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def quicksort()' })
+    vim.api.nvim_win_set_cursor(0, { 1, 13 }) -- antes do "("
+    ghost_text.show_suggestion({ '(arr):' }, 2)
+    ghost_text.accept()
+    vim.wait(200, function() return vim.api.nvim_buf_get_lines(buf, 0, -1, false)[1] == 'def quicksort(arr):' end, 10)
+    assert.are.same({ 'def quicksort(arr):' }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  end)
+
+  it("accept com sugestao multi-linha", function()
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def foo()' })
+    vim.api.nvim_win_set_cursor(0, { 1, 8 })
+    ghost_text.show_suggestion({ 'x):', '    return x' }, 1)
+    ghost_text.accept()
+    vim.wait(200, function() return #vim.api.nvim_buf_get_lines(buf, 0, -1, false) == 2 end, 10)
+    assert.are.same({ 'def foo(x):', '    return x' }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  end)
+end)
