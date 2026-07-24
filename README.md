@@ -4,6 +4,8 @@
 
 Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model round-robin (Gemini, Claude, or any model you configure).
 
+![demo: ghost-text suggestion appearing and being accepted with Tab](demo.gif)
+
 ## Installation
 
 Requires `curl` on `$PATH`. Set at least one API key as an environment variable before starting Vim/Neovim (`GEMINI_API_KEY` and/or `ANTHROPIC_API_KEY`, or whatever `api_key_env` you configure per model — see [Configuration](#configuration)).
