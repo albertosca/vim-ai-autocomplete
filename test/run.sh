@@ -15,12 +15,20 @@ echo "== plenary (Neovim) =="
 nvim_out=$(nvim --headless -u test/nvim/minimal_init.lua \
   -c "PlenaryBustedDirectory test/nvim/ {minimal_init = 'test/nvim/minimal_init.lua'}" 2>&1) || true
 echo "$nvim_out" | grep -E "Success|Fail|Error" || true
-nvim_failed=$(echo "$nvim_out" | grep -c "Fail ||" || true)
+# O plenary colore a saida, entao 'Fail' e '||' vem separados por escapes ANSI
+# -- o grep antigo ("Fail ||") NUNCA casava e a suite reportava verde mesmo com
+# teste quebrado. Tira o ANSI e soma os totais que o proprio plenary imprime
+# por arquivo, contando tambem os Errors (teste que estourou antes de assertar).
+nvim_clean=$(echo "$nvim_out" | sed $'s/\033\\[[0-9;]*m//g')
+nvim_passed=$(echo "$nvim_clean" | awk '/^Success:/ {s+=$2} END {print s+0}')
+nvim_failed=$(echo "$nvim_clean" | awk '/^Failed :/ {s+=$3} END {print s+0}')
+nvim_errors=$(echo "$nvim_clean" | awk '/^Errors :/ {s+=$3} END {print s+0}')
+nvim_failed=$((nvim_failed + nvim_errors))
 
 echo ""
 echo "== Summary =="
 echo "vader:    $vim_passed/$vim_total passed"
-echo "plenary:  failures: $nvim_failed"
+echo "plenary:  $nvim_passed passed, $nvim_failed failed (inclui errors)"
 
 if [[ "$vim_failed" -gt 0 || "$nvim_failed" -gt 0 ]]; then
   echo "FAILED"
