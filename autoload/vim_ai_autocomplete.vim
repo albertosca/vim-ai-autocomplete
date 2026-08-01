@@ -762,7 +762,7 @@ endfunction
 " testing with an API credit balance of zero: it looked as if the completion
 " simply did nothing, with no hint why. Returns '' when there is nothing
 " wrong to report (a legitimately empty response, e.g. the cursor at the end
-" de um arquivo completo).
+" of a complete file).
 function! vim_ai_autocomplete#DescribeCompletionFailure(provider, status, raw_output) abort
   let message = vim_ai_autocomplete#ExtractApiErrorMessage(a:raw_output)
   if !empty(message)
