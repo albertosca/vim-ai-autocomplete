@@ -5,7 +5,6 @@ local ghost_text = require('vim-ai-autocomplete.ghost_text')
 local M = {}
 
 local tab_fallback = { rhs = '\t', is_expr = false, callback = nil }
-local esc_fallback = { rhs = '\27', is_expr = false, callback = nil } -- \27 = <Esc>
 
 -- Mapeamentos baseados em callback Lua (ex: blink.cmp, "pula pro proximo
 -- placeholder do snippet ou cai pro Tab normal") nao tem 'rhs' classico --
@@ -34,29 +33,18 @@ function M.tab_handler()
   return tab_fallback.rhs
 end
 
-function M.setup_esc_wrap()
-  local original = vim.fn.maparg('<Esc>', 'i', false, true)
-  if original and original.lhs then
-    esc_fallback.rhs = original.rhs or '\27'
-    esc_fallback.is_expr = original.expr == 1
-    esc_fallback.callback = original.callback
-  end
-  vim.keymap.set('i', '<Esc>', M.esc_handler, { expr = true, silent = true })
-end
-
-function M.esc_handler()
-  if ghost_text.is_visible() then
-    ghost_text.clear_suggestion()
-    return ''
-  end
-  if esc_fallback.callback then
-    local result = esc_fallback.callback()
-    return esc_fallback.is_expr and result or ''
-  end
-  if esc_fallback.is_expr then
-    return vim.api.nvim_eval(esc_fallback.rhs)
-  end
-  return esc_fallback.rhs
+-- Descarta a sugestao SEM sair do insert mode. Antes isso vivia num wrap do
+-- <Esc>, que engolia a tecla sempre que havia sugestao visivel: o usuario
+-- apertava <Esc> pra sair do insert, continuava no insert, e as teclas
+-- seguintes entravam como texto no buffer (reproduzido em markdown, onde a
+-- sugestao esta visivel quase o tempo todo). Uma tecla nao pode ter dois
+-- significados sem o usuario conseguir prever qual vale, entao <Esc> voltou
+-- a ser so <Esc> -- a sugestao e' limpa pelo autocmd InsertLeavePre -- e o
+-- descarte-sem-sair ganhou tecla propria. <C-]> e' a mesma escolha do
+-- copilot.vim pra dispensar sugestao.
+function M.dismiss()
+  ghost_text.clear_suggestion()
+  return ''
 end
 
 function M.toggle_auto_trigger()

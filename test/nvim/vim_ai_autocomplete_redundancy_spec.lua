@@ -92,3 +92,91 @@ describe("vim-ai-autocomplete.redundancy.adjust_suggestion_lines", function()
     assert.are.same({ '', 'pass' }, lines)
   end)
 end)
+
+describe("vim-ai-autocomplete.redundancy.split_display_tail", function()
+  -- Texto final ao aceitar, do jeito que ghost_text.insert_accepted_lines
+  -- monta: sugestao + o que sobra de "depois" apos descartar os redundantes.
+  local function accepted(lines, after, ra)
+    return table.concat(lines, '\n') .. after:sub(ra + 1)
+  end
+
+  it("sugestao termina exatamente com o ')' real -> corta a cauda, nao descarta nada", function()
+    local lines, ra = redundancy.split_display_tail({ 'Continuous Integration)' }, ')', 1)
+    assert.are.same({ 'Continuous Integration' }, lines)
+    assert.are.equal(0, ra)
+  end)
+
+  it('print("|") -- corta o \'")\' da sugestao e mantem os reais', function()
+    local lines, ra = redundancy.split_display_tail({ 'ola")' }, '")', 2)
+    assert.are.same({ 'ola' }, lines)
+    assert.are.equal(0, ra)
+  end)
+
+  it("fechamento no MEIO da sugestao -> NAO corta (cortar a cauda produziria texto errado)", function()
+    local lines, ra = redundancy.split_display_tail({ 'x) { return; }' }, ')', 1)
+    assert.are.same({ 'x) { return; }' }, lines)
+    assert.are.equal(1, ra)
+  end)
+
+  it("corte parcial: casa so parte do que seria descartado", function()
+    local lines, ra = redundancy.split_display_tail({ 'x)' }, '")', 2)
+    assert.are.same({ 'x' }, lines)
+    assert.are.equal(1, ra)
+  end)
+
+  it("redundant_after zero -> nao mexe", function()
+    local lines, ra = redundancy.split_display_tail({ 'foo' }, ')', 0)
+    assert.are.same({ 'foo' }, lines)
+    assert.are.equal(0, ra)
+  end)
+
+  it("sugestao multi-linha -> corta so a ultima linha", function()
+    local lines, ra = redundancy.split_display_tail({ 'a,', '    b)' }, ')', 1)
+    assert.are.same({ 'a,', '    b' }, lines)
+    assert.are.equal(0, ra)
+  end)
+
+  it("lines vazio -> nao mexe", function()
+    local lines, ra = redundancy.split_display_tail({}, ')', 1)
+    assert.are.same({}, lines)
+    assert.are.equal(1, ra)
+  end)
+
+  it("sugestao inteira e' so o redundante -> nada a mostrar", function()
+    local lines, ra = redundancy.split_display_tail({ ')' }, ')', 1)
+    assert.are.same({}, lines)
+    assert.are.equal(0, ra)
+  end)
+
+  it("cauda maior que a sugestao nao casa, mas a cauda menor ainda casa", function()
+    -- keep=0 pediria a cauda '")' (2 chars) contra uma sugestao de 1 char --
+    -- nao casa. keep=1 pede so ')', que casa: sobra descartar o '" ' real e a
+    -- sugestao inteira vira redundante, nada a exibir.
+    local lines, ra = redundancy.split_display_tail({ ')' }, '")', 2)
+    assert.are.same({}, lines)
+    assert.are.equal(1, ra)
+  end)
+
+  it("sugestao nao termina com nenhum sufixo do que seria descartado -> nao corta", function()
+    local lines, ra = redundancy.split_display_tail({ 'x' }, '")', 2)
+    assert.are.same({ 'x' }, lines)
+    assert.are.equal(2, ra)
+  end)
+
+  it("INVARIANTE: o texto final aceito e' identico com e sem o corte", function()
+    local cases = {
+      { { 'Continuous Integration)' }, ')', 1 },
+      { { 'ola")' }, '")', 2 },
+      { { 'x) { return; }' }, ')', 1 },
+      { { 'x)' }, '")', 2 },
+      { { 'a,', '    b)' }, ')', 1 },
+      { { ')' }, ')', 1 },
+      { { ')' }, '")', 2 },
+      { { 'foo' }, ')', 0 },
+    }
+    for _, c in ipairs(cases) do
+      local lines, ra = redundancy.split_display_tail(c[1], c[2], c[3])
+      assert.are.equal(accepted(c[1], c[2], c[3]), accepted(lines, c[2], ra))
+    end
+  end)
+end)

@@ -159,6 +159,41 @@ function! vim_ai_autocomplete#ComputeTextOverlapLength(lines, after_text) abort
   return 0
 endfunction
 
+" Tira do FIM da sugestao EXIBIDA os caracteres que ja existem, identicos, no
+" buffer logo depois do cursor -- assim a tela mostra exatamente o texto final
+" (um ')' so) em vez de ')' da sugestao + ')' real riscado. O ghost text e'
+" texto virtual: cada caractere dele empurra o texto real da linha pra
+" direita, entao mostrar o fechamento duas vezes afastava o ')' real do cursor
+" e a linha "pulava" a cada tecla.
+"
+" So corta quando a sugestao TERMINA com esses caracteres. Fechamento no MEIO
+" da sugestao (ex: 'x) { return; }' fechando um '(' anterior) continua sendo
+" resolvido descartando o caractere real, porque cortar a cauda ali produziria
+" texto errado. Retorna [lines, redundant_after] ajustados -- o texto final
+" apos aceitar e' identico ao de antes do corte, so muda o que aparece.
+function! vim_ai_autocomplete#SplitDisplayTail(lines, after_text, redundant_after) abort
+  if empty(a:lines) || a:redundant_after <= 0
+    return [a:lines, a:redundant_after]
+  endif
+  let suggestion_text = join(a:lines, "\n")
+  " keep = quantos caracteres reais continuam sendo descartados. Procura do
+  " corte maior (keep 0) pro menor, parando no primeiro que casa.
+  let keep = 0
+  while keep < a:redundant_after
+    let tail = strpart(a:after_text, keep, a:redundant_after - keep)
+    if len(tail) <= len(suggestion_text)
+          \ && strpart(suggestion_text, len(suggestion_text) - len(tail), len(tail)) ==# tail
+      let cut = strpart(suggestion_text, 0, len(suggestion_text) - len(tail))
+      if empty(cut)
+        return [[], keep]
+      endif
+      return [split(cut, "\n", 1), keep]
+    endif
+    let keep += 1
+  endwhile
+  return [a:lines, a:redundant_after]
+endfunction
+
 " Cobre sobreposicao de ESTRUTURA: quando a sugestao fecha, com seu
 " proprio texto, um parenteses/colchete/chave/aspa que ja estava aberto
 " ANTES do cursor, o fechamento real que ja existe em "depois" (ex:
@@ -503,24 +538,17 @@ function! vim_ai_autocomplete#TabHandler() abort
   return s:tab_fallback_is_expr ? eval(s:tab_fallback_rhs) : s:tab_fallback_rhs
 endfunction
 
-let s:esc_fallback_rhs = '"\<Esc>"'
-let s:esc_fallback_is_expr = 1
-
-function! vim_ai_autocomplete#SetupEscWrap() abort
-  let original_map = maparg('<Esc>', 'i', 0, 1)
-  if !empty(original_map)
-    let s:esc_fallback_rhs = original_map.rhs
-    let s:esc_fallback_is_expr = get(original_map, 'expr', 0)
-  endif
-  inoremap <script><silent><expr> <Esc> vim_ai_autocomplete#EscHandler()
-endfunction
-
-function! vim_ai_autocomplete#EscHandler() abort
-  if vim_ai_autocomplete#IsVisible()
-    call vim_ai_autocomplete#ClearSuggestion()
-    return ''
-  endif
-  return s:esc_fallback_is_expr ? eval(s:esc_fallback_rhs) : s:esc_fallback_rhs
+" Descarta a sugestao SEM sair do insert mode. Antes isso vivia num wrap do
+" <Esc>, que engolia a tecla sempre que havia sugestao visivel: o usuario
+" apertava <Esc> pra sair do insert, continuava no insert, e as teclas
+" seguintes entravam como texto no buffer. Uma tecla nao pode ter dois
+" significados sem o usuario conseguir prever qual vale, entao <Esc> voltou a
+" ser so <Esc> -- a sugestao e' limpa pelo autocmd InsertLeavePre -- e o
+" descarte-sem-sair ganhou tecla propria. <C-]> e' a mesma escolha do
+" copilot.vim pra dispensar sugestao.
+function! vim_ai_autocomplete#Dismiss() abort
+  call vim_ai_autocomplete#ClearSuggestion()
+  return ''
 endfunction
 
 function! vim_ai_autocomplete#Accept() abort
@@ -807,6 +835,10 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
     let current_line_remainder = strpart(current_line, a:col - 1)
     let redundant_after = min([redundant_after, len(current_line_remainder)])
     let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
+    " por ultimo, ja com as linhas na forma final que vai pra tela: tira da
+    " sugestao o fechamento que o buffer ja tem, pra nao renderizar ')' duas
+    " vezes e empurrar o ')' real pra longe do cursor.
+    let [lines, redundant_after] = vim_ai_autocomplete#SplitDisplayTail(lines, a:after, redundant_after)
     call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
   else
     call s:WarnCompletionFailure(a:provider, a:status, body)

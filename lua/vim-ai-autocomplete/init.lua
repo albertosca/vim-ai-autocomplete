@@ -59,7 +59,7 @@ function M.setup(opts)
   end
 
   keymaps.setup_tab_wrap()
-  keymaps.setup_esc_wrap()
+  vim.keymap.set('i', '<C-]>', keymaps.dismiss, { expr = true, silent = true, desc = 'vim-ai-autocomplete: dismiss suggestion' })
 
   -- ,pt nao depende de API key (so liga/desliga o debounce automatico) --
   -- registrado sempre, diferente de ,pr (so com 2+ modelos ativos).

@@ -44,6 +44,10 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
     local current_line_remainder = current_line:sub(col)
     redundant_after = math.min(redundant_after, #current_line_remainder)
     lines = redundancy.adjust_suggestion_lines(lines, before_cursor, vim.bo.filetype, vim.fn.shiftwidth(), vim.bo.expandtab)
+    -- por ultimo, ja com as linhas na forma final que vai pra tela: tira da
+    -- sugestao o fechamento que o buffer ja tem, pra nao renderizar ')' duas
+    -- vezes e empurrar o ')' real pra longe do cursor.
+    lines, redundant_after = redundancy.split_display_tail(lines, after, redundant_after)
     ghost_text.show_suggestion(lines, redundant_after)
   else
     warn_completion_failure(provider, status, body)

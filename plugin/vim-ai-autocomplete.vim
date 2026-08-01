@@ -39,10 +39,14 @@ let g:vim_ai_autocomplete_auto_trigger = get(g:, 'vim_ai_autocomplete_auto_trigg
 " existe se houver mais de um provider pra alternar.
 nnoremap <silent> <leader>pt :call vim_ai_autocomplete#ToggleAutoTrigger()<CR>
 
+" Descarta a sugestao sem sair do insert mode. Fica numa tecla propria (e nao
+" mais num wrap do <Esc>) pra que <Esc> continue sendo so <Esc> -- ver
+" vim_ai_autocomplete#Dismiss().
+inoremap <script><silent><expr> <C-]> vim_ai_autocomplete#Dismiss()
+
 augroup vim_ai_autocomplete
   autocmd!
   autocmd VimEnter * call vim_ai_autocomplete#SetupTabWrap()
-        \ | call vim_ai_autocomplete#SetupEscWrap()
         \ | call vim_ai_autocomplete#SetupProviderToggle(vim_ai_autocomplete#ActiveModels())
   autocmd CursorMovedI * call vim_ai_autocomplete#Trigger()
   autocmd InsertLeavePre * call vim_ai_autocomplete#ClearSuggestion()

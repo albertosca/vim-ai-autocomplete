@@ -189,27 +189,53 @@ After:
   unlet $IT004_KEY_B
   unlet $IT004_KEY_C
 
-Execute (IT-005 SetupEscWrap preserva o comportamento antigo do <Esc> quando nao ha sugestao):
-  let original_map = maparg('<Esc>', 'i', 0, 1)
-  call vim_ai_autocomplete#SetupEscWrap()
-  new
-  call setline(1, 'foo')
-  let result = vim_ai_autocomplete#EscHandler()
-  let original_result = empty(original_map) ? "\<Esc>" : (original_map.expr ? eval(original_map.rhs) : original_map.rhs)
-  AssertEqual original_result, result, 'sem sugestao visivel, EscHandler deveria se comportar identico ao mapeamento original de <Esc>'
+Execute (IT-005 o plugin NAO mapeia mais o <Esc> no insert mode):
+  " Regressao da causa raiz: o wrap antigo engolia o <Esc> sempre que havia
+  " sugestao visivel -- o usuario apertava <Esc> pra sair do insert, continuava
+  " no insert, e as teclas seguintes viravam texto no buffer.
+  Assert !exists('*vim_ai_autocomplete#EscHandler'), 'EscHandler nao deveria mais existir'
+  Assert !exists('*vim_ai_autocomplete#SetupEscWrap'), 'SetupEscWrap nao deveria mais existir'
+  let esc_map = maparg('<Esc>', 'i', 0, 1)
+  if !empty(esc_map)
+    Assert stridx(get(esc_map, 'rhs', ''), 'vim_ai_autocomplete') < 0,
+          \ 'o plugin nao pode sequestrar o <Esc> no insert mode'
+  endif
 After:
-  bdelete!
+  " Este bloco nao abre buffer nem define global nenhuma -- o After vazio
+  " existe pra nao herdar o do bloco anterior (Vader propaga o ultimo After
+  " definido pros blocos seguintes).
 
-Execute (IT-006 EscHandler dispensa a sugestao sem sair do insert mode quando ela esta visivel):
+Execute (IT-006 Dismiss descarta a sugestao sem sair do insert mode):
   new
   call setline(1, 'def foo(')
   call cursor(1, 9)
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    pass'])
-  let result = vim_ai_autocomplete#EscHandler()
-  AssertEqual '', result, 'com sugestao visivel, EscHandler deveria retornar string vazia (nao sai do insert mode)'
-  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'EscHandler deveria limpar a sugestao'
+  AssertEqual 1, vim_ai_autocomplete#IsVisible(), 'pre-condicao: sugestao visivel'
+  let result = vim_ai_autocomplete#Dismiss()
+  AssertEqual '', result, 'Dismiss deveria retornar string vazia (nao injeta nada no buffer)'
+  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Dismiss deveria limpar a sugestao'
 After:
   bdelete!
+
+Execute (IT-018 SplitDisplayTail: sugestao que fecha o proprio parenteses nao renderiza ')' duas vezes):
+  " O ghost text e' texto virtual: cada caractere empurra o texto real da linha
+  " pra direita. Com a cauda cortada, a tela vira exatamente o texto final.
+  let [lines, ra] = vim_ai_autocomplete#SplitDisplayTail(['Continuous Integration)'], ')', 1)
+  AssertEqual ['Continuous Integration'], lines, 'o ")" da sugestao deveria sair da exibicao'
+  AssertEqual 0, ra, 'sem cauda duplicada, nada mais precisa ser descartado'
+
+Execute (IT-019 SplitDisplayTail: fechamento no MEIO da sugestao nao e cortado):
+  let [lines, ra] = vim_ai_autocomplete#SplitDisplayTail(['x) { return; }'], ')', 1)
+  AssertEqual ['x) { return; }'], lines, 'cortar a cauda aqui produziria texto errado'
+  AssertEqual 1, ra, 'segue descartando o ")" real, como antes'
+
+Execute (IT-020 SplitDisplayTail: o texto final aceito nao muda com o corte):
+  for case in [[['Continuous Integration)'], ')', 1], [['ola")'], '")', 2], [['x) { return; }'], ')', 1], [['a,', '    b)'], ')', 1], [[')'], ')', 1]]
+    let [lines, ra] = vim_ai_autocomplete#SplitDisplayTail(case[0], case[1], case[2])
+    let antes = join(case[0], "\n") . strpart(case[1], case[2])
+    let depois = join(lines, "\n") . strpart(case[1], ra)
+    AssertEqual antes, depois, 'o corte nao pode mudar o texto final aceito: ' . string(case)
+  endfor
 
 Execute (IT-007 ,pt esta registrado no plugin (mesmo mapeamento existe no lado Neovim)):
   let map = maparg(',pt', 'n', 0, 1)

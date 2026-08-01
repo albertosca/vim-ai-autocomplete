@@ -71,7 +71,7 @@ describe("vim-ai-autocomplete.keymaps.tab_handler", function()
   end)
 end)
 
-describe("vim-ai-autocomplete.keymaps.esc_handler", function()
+describe("vim-ai-autocomplete.keymaps.dismiss", function()
   local buf
 
   before_each(function()
@@ -85,29 +85,29 @@ describe("vim-ai-autocomplete.keymaps.esc_handler", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  it("sem sugestao visivel, com mapeamento <expr> baseado em callback Lua: chama o callback e retorna seu resultado", function()
-    -- Espelha o teste equivalente de tab_handler: mapeamento <expr> cujo
-    -- rhs e um callback Lua (sem 'rhs' classico). setup_esc_wrap() precisa
-    -- capturar esc_fallback.callback + is_expr=true; esc_handler() deve
-    -- chamar o callback e, por ser is_expr=true, retornar o resultado DELE
-    -- (nao ''), mesma semantica do tab_handler ja corrigido.
-    vim.keymap.set('i', '<Esc>', function() return 'from-callback' end, { expr = true })
-    keymaps.setup_esc_wrap()
-    assert.are.equal('from-callback', keymaps.esc_handler())
-    vim.keymap.del('i', '<Esc>')
+  it("limpa a sugestao visivel e nao injeta nada no buffer", function()
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'foo' })
+    vim.fn.cursor(1, 3)
+    ghost_text.show_suggestion({ 'bar' })
+    assert.is_true(ghost_text.is_visible())
+    assert.are.equal('', keymaps.dismiss())
+    assert.is_false(ghost_text.is_visible())
   end)
 
-  it("sem sugestao visivel, com mapeamento NAO-<expr> baseado em callback Lua: nao retorna o resultado do callback", function()
-    -- Espelha o teste equivalente de tab_handler: mapeamento de <Esc>
-    -- baseado em callback Lua que NAO e <expr>. setup_esc_wrap() captura
-    -- callback + is_expr=false; esc_handler() NAO pode retornar o
-    -- resultado do callback nesse caso -- precisa retornar '' como
-    -- qualquer outro fallback nao-expr, gateado por is_expr (distingue o
-    -- fix do bug antigo de return incondicional).
-    vim.keymap.set('i', '<Esc>', function() return 'should-not-leak-into-buffer' end)
-    keymaps.setup_esc_wrap()
-    assert.are.equal('', keymaps.esc_handler())
-    vim.keymap.del('i', '<Esc>')
+  it("sem sugestao visivel e' inofensivo", function()
+    assert.is_false(ghost_text.is_visible())
+    assert.are.equal('', keymaps.dismiss())
+    assert.is_false(ghost_text.is_visible())
+  end)
+
+  -- Regressao da causa raiz: o plugin nao pode mais sequestrar o <Esc>.
+  -- Antes, com sugestao visivel, o wrap devolvia '' e o usuario ficava preso
+  -- no insert mode -- as teclas seguintes viravam texto no buffer. O unico
+  -- caminho pra esse sequestro eram estas duas funcoes; sem elas, <Esc> e'
+  -- so <Esc> e a sugestao sai pelo autocmd InsertLeavePre.
+  it("nao expoe mais o wrap de <Esc>", function()
+    assert.is_nil(keymaps.setup_esc_wrap)
+    assert.is_nil(keymaps.esc_handler)
   end)
 end)
 

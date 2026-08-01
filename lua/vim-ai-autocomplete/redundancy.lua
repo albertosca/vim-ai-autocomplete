@@ -102,6 +102,40 @@ function M.compute_text_overlap_length(lines, after_text)
   return 0
 end
 
+-- Tira do FIM da sugestao EXIBIDA os caracteres que ja existem, identicos, no
+-- buffer logo depois do cursor -- assim a tela mostra exatamente o texto final
+-- (um ')' so) em vez de ')' da sugestao + ')' real riscado. O ghost text e'
+-- virtual inline: cada caractere dele empurra o texto real da linha pra
+-- direita, entao mostrar o fechamento duas vezes afastava o ')' real do cursor
+-- e a linha "pulava" a cada tecla (relatado em markdown, onde a sugestao e'
+-- longa e vem a cada tecla).
+--
+-- So corta quando a sugestao TERMINA com esses caracteres. Fechamento no MEIO
+-- da sugestao (ex: 'x) { return; }' fechando um '(' anterior) continua sendo
+-- resolvido descartando o caractere real, porque cortar a cauda ali produziria
+-- texto errado. Retorna (lines, redundant_after) ajustados -- o texto final
+-- apos aceitar e' identico ao de antes do corte, so muda o que aparece.
+function M.split_display_tail(lines, after_text, redundant_after)
+  redundant_after = redundant_after or 0
+  if #lines == 0 or redundant_after <= 0 then
+    return lines, redundant_after
+  end
+  local suggestion_text = table.concat(lines, '\n')
+  -- keep = quantos caracteres reais continuam sendo descartados. Procura do
+  -- corte maior (keep 0) pro menor, parando no primeiro que casa.
+  for keep = 0, redundant_after - 1 do
+    local tail = after_text:sub(keep + 1, redundant_after)
+    if #tail <= #suggestion_text and suggestion_text:sub(-#tail) == tail then
+      local cut = suggestion_text:sub(1, #suggestion_text - #tail)
+      if cut == '' then
+        return {}, keep
+      end
+      return vim.split(cut, '\n', { plain = true }), keep
+    end
+  end
+  return lines, redundant_after
+end
+
 -- Alguns modelos tratam a resposta como continuacao literal de bytes: se o
 -- contexto termina em ":" (abertura de bloco Python), a primeira linha da
 -- sugestao vem sem quebra de linha nem indentacao propria -- mesmo achado
