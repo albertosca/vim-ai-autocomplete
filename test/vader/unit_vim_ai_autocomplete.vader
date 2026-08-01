@@ -463,7 +463,7 @@ Execute (UN-049 CountRedundantAfterChars: several levels closed by the suggestio
 Execute (UN-050 CountRedundantAfterChars: the suggestion opens and closes its own parenthesis -> leaves what already existed alone):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('foo(', 'bar(1, 2)', ')')
 
-" UN-051 a UN-054: CountRedundantAfterChars com aspas (g:AutoPairs tambem
+" UN-051 to UN-054: CountRedundantAfterChars with quotes (g:AutoPairs also
 " fecha ' " ` -- simetricas, alternam em vez de empilhar tipo diferente).
 
 Execute (UN-051 CountRedundantAfterChars: the suggestion closes the double quote opened before it -> the real quote becomes redundant):
@@ -478,15 +478,15 @@ Execute (UN-053 CountRedundantAfterChars: mixes parentheses and quotes -- print(
 Execute (UN-054 CountRedundantAfterChars: a quote inside the suggestion that closes NOTHING opened before -> leaves it alone):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('foo(', '"bar"', ')')
 
-" UN-055 a UN-058: cursor ANTES do proprio abre-parenteses (nao dentro do
-" par ja aberto) -- "antes" nao tem nenhum bracket pendente (depth 0), e a
-" sugestao, sem saber que o par vazio ja existe em "depois", escreve sua
-" PROPRIA versao completa. Achado real, reportado pelo Alberto 2026-07-21
-" (def quicksort()/mergesort() com cursor ANTES do "(", nao entre os dois
-" parenteses -- log de debug g:vim_ai_autocomplete_debug confirmou
-" depth_before=0, a:after='()' intacto, redundant_after=0 pelos dois
-" mecanismos ja existentes): "def quicksort" + sugestao "(arr):" + "()"
-" intacto = "def quicksort(arr):()" -- par vazio original sobra no final.
+" UN-055 to UN-058: cursor BEFORE the opening bracket itself (not inside the
+" pair already opened) -- "before" has no pending bracket (depth 0), and the
+" suggestion, unaware that the empty pair already exists in "after", writes
+" its OWN complete version. Real finding on 2026-07-21 (def
+" quicksort()/mergesort() with the cursor BEFORE the "(", not between the two
+" parentheses -- a g:vim_ai_autocomplete_debug log confirmed depth_before=0,
+" a:after='()' untouched, redundant_after=0 from both existing mechanisms):
+" "def quicksort" plus the suggestion "(arr):" plus an untouched "()" gives
+" "def quicksort(arr):()" -- the original empty pair is left over at the end.
 
 Execute (UN-055 CountRedundantAfterChars: cursor before the opening bracket, suggestion writes its own pair -> the original empty pair becomes redundant):
   AssertEqual 2, vim_ai_autocomplete#CountRedundantAfterChars('def quicksort', '(arr):', '()')

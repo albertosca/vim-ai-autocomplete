@@ -441,8 +441,8 @@ endfunction
 " "this is going to be inserted") for a character that is in fact going to
 " be REMOVED was misleading: it looked like ghost text but vanished on Tab
 " instead of "solidifying" like the rest of the suggestion (real finding,
-" reportado pelo Alberto: "o parenteses errado aparece como ghost text mas
-" when I press tab it does not show up").
+" reported as: "the wrong parenthesis shows up as ghost text but when I
+" press tab it does not show up").
 function! s:EnsureRedundantPropType() abort
   if empty(prop_type_get(s:redundant_prop_type))
     if !hlexists('VimAiAutocompleteRedundant')
@@ -457,8 +457,8 @@ function! s:EnsureRedundantPropType() abort
 endfunction
 
 " redundant_after (optional, defaults to 0): how many characters from the
-" texto real DEPOIS do cursor devem ser DESCARTADOS (nao preservados) ao
-" accept -- see CountRedundantAfterChars(). Used when the suggestion already
+" START of the real text AFTER the cursor must be DISCARDED (not preserved)
+" on accept -- see CountRedundantAfterChars(). Used when the suggestion already
 " closes, with its own text, a bracket/brace that was open
 " aberto antes do cursor, deixando o fechamento real (ex: do auto-pairs)
 " orfao/duplicado.
