@@ -1,6 +1,6 @@
 local ghost_text = require('vim-ai-autocomplete.ghost_text')
 
-describe("vim-ai-autocomplete.request.request_completion (vim.system mockado)", function()
+describe("vim-ai-autocomplete.request.request_completion (vim.system mocked)", function()
   local buf, original_system, captured_cmd
 
   before_each(function()
@@ -21,7 +21,7 @@ describe("vim-ai-autocomplete.request.request_completion (vim.system mockado)", 
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  it("monta o comando certo e mostra a sugestao quando a resposta chega", function()
+  it("builds the right command and shows the suggestion once the response arrives", function()
     vim.system = function(cmd, _, on_exit)
       captured_cmd = cmd
       on_exit({ code = 0, stdout = vim.json.encode({ candidates = { { content = { parts = { { text = 'x):\n    return x' } } } } } }) })
@@ -37,7 +37,7 @@ describe("vim-ai-autocomplete.request.request_completion (vim.system mockado)", 
     assert.is_true(ghost_text.is_visible())
   end)
 
-  it("sem nenhuma API key configurada: nao faz request nenhuma", function()
+  it("with no API key configured: makes no request at all", function()
     vim.fn.setenv('GEMINI_API_KEY', vim.NIL)
     local called = false
     vim.system = function() called = true end

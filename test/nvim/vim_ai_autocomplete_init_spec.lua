@@ -16,10 +16,10 @@ describe("vim-ai-autocomplete.trigger", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  -- fix de 2026-07-21 do lado Vim (commit 84a2975), portado aqui: mover o
-  -- cursor pra longe de onde a sugestao foi mostrada invalida ela --
-  -- aceitar do jeito que esta inseriria o texto errado na posicao errada.
-  it("invalida a sugestao visivel se o cursor se moveu pra longe de onde ela foi mostrada", function()
+  -- the 2026-07-21 fix from the Vim side (commit 84a2975), ported here:
+  -- moving the cursor away from where the suggestion was shown invalidates it
+  -- -- accepting it as is would insert the wrong text at the wrong position.
+  it("invalidates the visible suggestion when the cursor moved away from where it was shown", function()
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def foo()' })
     vim.api.nvim_win_set_cursor(0, { 1, 8 })
     ghost_text.show_suggestion({ 'a, b):' }, 0)
@@ -30,7 +30,7 @@ describe("vim-ai-autocomplete.trigger", function()
     assert.is_false(ghost_text.is_visible())
   end)
 
-  it("NAO invalida se o cursor continua na mesma posicao", function()
+  it("does NOT invalidate it when the cursor is still at the same position", function()
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def foo()' })
     vim.api.nvim_win_set_cursor(0, { 1, 8 })
     ghost_text.show_suggestion({ 'a, b):' }, 0)
@@ -40,7 +40,7 @@ describe("vim-ai-autocomplete.trigger", function()
 end)
 
 describe("vim-ai-autocomplete.setup", function()
-  it("roda sem erro e registra ,pt", function()
+  it("runs without error and registers ,pt", function()
     vai.setup()
     local map = vim.fn.maparg('<leader>pt', 'n', false, true)
     assert.is_not_nil(map.callback)
@@ -54,23 +54,23 @@ describe("vim-ai-autocomplete.setup com opts", function()
     vim.g.vim_ai_autocomplete_provider = nil
   end)
 
-  it("opts.models seta vim.g.vim_ai_autocomplete_models", function()
+  it("opts.models sets vim.g.vim_ai_autocomplete_models", function()
     local models_list = { { name = 'a', family = 'gemini', model_id = 'x', api_key_env = 'VAA_TEST_KEY_SETUP' } }
     vai.setup({ models = models_list })
     assert.are.same(models_list, vim.g.vim_ai_autocomplete_models)
   end)
 
-  it("opts.auto_trigger = false vira vim.g.vim_ai_autocomplete_auto_trigger = 0", function()
+  it("opts.auto_trigger = false becomes vim.g.vim_ai_autocomplete_auto_trigger = 0", function()
     vai.setup({ auto_trigger = false })
     assert.are.equal(0, vim.g.vim_ai_autocomplete_auto_trigger)
   end)
 
-  it("sem opts.auto_trigger, mantem o default 1", function()
+  it("with no opts.auto_trigger, keeps the default of 1", function()
     vai.setup({})
     assert.are.equal(1, vim.g.vim_ai_autocomplete_auto_trigger)
   end)
 
-  it("chamar setup() sem argumento nenhum continua funcionando (nil opts)", function()
+  it("calling setup() with no argument at all keeps working (nil opts)", function()
     assert.has_no.errors(function() vai.setup() end)
   end)
 end)

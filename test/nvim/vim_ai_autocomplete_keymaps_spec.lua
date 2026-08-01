@@ -15,55 +15,56 @@ describe("vim-ai-autocomplete.keymaps.tab_handler", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  it("com sugestao visivel: aceita (retorna '')", function()
+  it("with a visible suggestion: accepts it (returns '')", function()
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def foo()' })
     vim.api.nvim_win_set_cursor(0, { 1, 8 })
     ghost_text.show_suggestion({ 'x)' }, 0)
     assert.are.equal('', keymaps.tab_handler())
   end)
 
-  it("sem sugestao visivel e sem mapeamento original: cai pro Tab literal", function()
-    -- tab_handler() e usado como rhs de um mapeamento 'expr' baseado em
-    -- callback Lua: o retorno e usado DIRETO como as keys tecladas, sem
-    -- ser reavaliado como expressao Vimscript (verificado empiricamente
-    -- via nvim_feedkeys) -- por isso comparamos o retorno diretamente,
-    -- em vez de envolver com nvim_eval() (que da E15 num tab literal).
+  it("no visible suggestion and no original mapping: falls back to a literal Tab", function()
+    -- tab_handler() is used as the rhs of an 'expr' mapping backed by a Lua
+    -- callback: its return value is used DIRECTLY as the typed keys, without
+    -- being re-evaluated as a Vimscript expression (verified empirically
+    -- through nvim_feedkeys) -- which is why we compare the return value
+    -- directly instead of wrapping it in nvim_eval() (which throws E15 on a
+    -- literal tab).
     assert.are.equal('\t', keymaps.tab_handler())
   end)
 
-  it("sem sugestao visivel, com mapeamento <expr> classico original: avalia o rhs", function()
-    -- Simula um mapeamento <expr> classico (rhs Vimscript, sem callback
-    -- Lua) preexistente -- ex: outro plugin que faz
-    -- `inoremap <expr> <Tab> '"literal"'`. setup_tab_wrap() deve capturar
-    -- esse rhs e is_expr=true; tab_handler() precisa avaliar o rhs via
-    -- nvim_eval() e retornar o resultado.
+  it("no visible suggestion, with a classic original <expr> mapping: evaluates the rhs", function()
+    -- Simulates a pre-existing classic <expr> mapping (Vimscript rhs, no Lua
+    -- callback) -- e.g. another plugin doing
+    -- `inoremap <expr> <Tab> '"literal"'`. setup_tab_wrap() must capture that
+    -- rhs with is_expr=true; tab_handler() has to evaluate the rhs through
+    -- nvim_eval() and return the result.
     vim.keymap.set('i', '<Tab>', '"literal"', { expr = true })
     keymaps.setup_tab_wrap()
     assert.are.equal('literal', keymaps.tab_handler())
     vim.keymap.del('i', '<Tab>')
   end)
 
-  it("sem sugestao visivel, com mapeamento <expr> baseado em callback Lua: chama o callback e retorna seu resultado", function()
-    -- Simula algo como blink.cmp: mapeamento <expr> cujo rhs e um
-    -- callback Lua (sem 'rhs' classico). setup_tab_wrap() captura
-    -- callback + is_expr=true; tab_handler() deve chamar o callback e,
-    -- por ser is_expr=true, retornar o resultado DELE (nao ''), batendo
-    -- com a semantica do Vimscript: `s:tab_fallback_is_expr ? result : ''`.
+  it("no visible suggestion, with an <expr> mapping backed by a Lua callback: calls it and returns its result", function()
+    -- Simulates something like blink.cmp: an <expr> mapping whose rhs is a
+    -- Lua callback (no classic 'rhs'). setup_tab_wrap() captures callback plus
+    -- is_expr=true; tab_handler() must call the callback and, because
+    -- is_expr=true, return ITS result (not ''), matching the Vimscript
+    -- semantics: `s:tab_fallback_is_expr ? result : ''`.
     vim.keymap.set('i', '<Tab>', function() return 'from-callback' end, { expr = true })
     keymaps.setup_tab_wrap()
     assert.are.equal('from-callback', keymaps.tab_handler())
     vim.keymap.del('i', '<Tab>')
   end)
 
-  it("sem sugestao visivel, com mapeamento NAO-<expr> baseado em callback Lua: nao retorna o resultado do callback", function()
-    -- Simula um mapeamento de <Tab> baseado em callback Lua que NAO e
-    -- <expr> (ex: `vim.keymap.set('i', '<Tab>', function() ... end)` sem
-    -- { expr = true }). setup_tab_wrap() captura callback + is_expr=false;
-    -- tab_handler() NAO pode retornar o resultado do callback nesse caso
-    -- (ele nao foi desenhado pra ser usado como valor de expr map e
-    -- vazaria texto pro buffer) -- precisa retornar '' como qualquer outro
-    -- fallback nao-expr. Distingue o fix (gate por is_expr) do bug antigo
-    -- (return incondicional de tab_fallback.callback()).
+  it("no visible suggestion, with a NON-<expr> mapping backed by a Lua callback: does not return the callback result", function()
+    -- Simulates a <Tab> mapping backed by a Lua callback that is NOT <expr>
+    -- (e.g. `vim.keymap.set('i', '<Tab>', function() ... end)` without
+    -- { expr = true }). setup_tab_wrap() captures callback plus is_expr=false;
+    -- tab_handler() may NOT return the callback result in that case (it was
+    -- never designed to be used as an expr-map value and would leak text into
+    -- the buffer) -- it has to return '' like any other non-expr fallback.
+    -- This distinguishes the fix (gated on is_expr) from the old bug (an
+    -- unconditional return of tab_fallback.callback()).
     vim.keymap.set('i', '<Tab>', function() return 'should-not-leak-into-buffer' end)
     keymaps.setup_tab_wrap()
     assert.are.equal('', keymaps.tab_handler())
@@ -85,7 +86,7 @@ describe("vim-ai-autocomplete.keymaps.dismiss", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  it("limpa a sugestao visivel e nao injeta nada no buffer", function()
+  it("clears the visible suggestion and injects nothing into the buffer", function()
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'foo' })
     vim.fn.cursor(1, 3)
     ghost_text.show_suggestion({ 'bar' })
@@ -94,25 +95,25 @@ describe("vim-ai-autocomplete.keymaps.dismiss", function()
     assert.is_false(ghost_text.is_visible())
   end)
 
-  it("sem sugestao visivel e' inofensivo", function()
+  it("with no visible suggestion it is harmless", function()
     assert.is_false(ghost_text.is_visible())
     assert.are.equal('', keymaps.dismiss())
     assert.is_false(ghost_text.is_visible())
   end)
 
-  -- Regressao da causa raiz: o plugin nao pode mais sequestrar o <Esc>.
-  -- Antes, com sugestao visivel, o wrap devolvia '' e o usuario ficava preso
-  -- no insert mode -- as teclas seguintes viravam texto no buffer. O unico
-  -- caminho pra esse sequestro eram estas duas funcoes; sem elas, <Esc> e'
-  -- so <Esc> e a sugestao sai pelo autocmd InsertLeavePre.
-  it("nao expoe mais o wrap de <Esc>", function()
+  -- Root-cause regression: the plugin may no longer hijack <Esc>. Previously,
+  -- with a suggestion visible, the wrap returned '' and the user was stuck in
+  -- insert mode -- the following keystrokes turned into buffer text. Those two
+  -- functions were the only path to that hijack; without them <Esc> is plain
+  -- <Esc> and the suggestion goes away through the InsertLeavePre autocmd.
+  it("no longer exposes the <Esc> wrap", function()
     assert.is_nil(keymaps.setup_esc_wrap)
     assert.is_nil(keymaps.esc_handler)
   end)
 end)
 
 describe("vim-ai-autocomplete.keymaps.complete_model_names", function()
-  it("filtra pelo prefixo literal (nao regex)", function()
+  it("filters by literal prefix (not regex)", function()
     vim.g.vim_ai_autocomplete_models = {
       { name = 'gemini-flash', family = 'gemini', model_id = 'x', api_key_env = 'VAA_TEST_KEY_A' },
       { name = 'claude-sonnet', family = 'anthropic', model_id = 'y', api_key_env = 'VAA_TEST_KEY_A' },
@@ -125,14 +126,14 @@ describe("vim-ai-autocomplete.keymaps.complete_model_names", function()
 end)
 
 describe("vim-ai-autocomplete.keymaps.setup_provider_toggle", function()
-  it("com 2+ modelos ativos, registra ,pr e o comando VimAiAutocompleteModel", function()
+  it("with 2+ active models, registers ,pr and the VimAiAutocompleteModel command", function()
     keymaps.setup_provider_toggle({ { name = 'a' }, { name = 'b' } })
     local map = vim.fn.maparg('<leader>pr', 'n', false, true)
     assert.is_not_nil(map.callback)
     assert.is_not_nil(vim.fn.exists(':VimAiAutocompleteModel'))
   end)
 
-  it("com so 1 modelo ativo, nao registra ,pr", function()
+  it("with only 1 active model, does not register ,pr", function()
     vim.keymap.del('n', '<leader>pr', { buffer = false })
     local ok = pcall(vim.keymap.del, 'n', '<leader>pr')
     keymaps.setup_provider_toggle({ { name = 'a' } })
@@ -142,7 +143,7 @@ describe("vim-ai-autocomplete.keymaps.setup_provider_toggle", function()
 end)
 
 describe("vim-ai-autocomplete.keymaps.open_model_picker", function()
-  it("chama vim.ui.select com os nomes dos modelos ativos e seleciona o escolhido", function()
+  it("calls vim.ui.select with the active model names and selects the chosen one", function()
     vim.g.vim_ai_autocomplete_models = {
       { name = 'gemini-flash', family = 'gemini', model_id = 'x', api_key_env = 'VAA_TEST_KEY_A' },
       { name = 'claude-sonnet', family = 'anthropic', model_id = 'y', api_key_env = 'VAA_TEST_KEY_A' },
