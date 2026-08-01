@@ -1,10 +1,10 @@
 local M = {}
 
-local PROMPT_TEMPLATE = 'Complete o codigo a seguir. O cursor esta entre o texto ANTES e o texto DEPOIS, que ja existem no buffer. Responda SOMENTE com o texto que deve ser inserido ENTRE eles -- nao repita nada que ja aparece em ANTES ou DEPOIS. Sem explicacao, sem markdown.\n\nANTES DO CURSOR:\n%s\n\nDEPOIS DO CURSOR:\n%s'
+local PROMPT_TEMPLATE = 'Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n%s\n\nAFTER THE CURSOR:\n%s'
 
--- Extrai a mensagem de erro de uma resposta JSON de erro da API (formato
--- comum entre Gemini e Claude: {"error": {"message": ...}}). Retorna nil se
--- nao for JSON, ou nao tiver esse formato.
+-- Extracts the error message from a JSON error response from the API (a
+-- shape common to Gemini and Claude: {"error": {"message": ...}}). Returns
+-- nil when the body is not JSON, or does not have that shape.
 function M.extract_api_error_message(raw_output)
   local ok, data = pcall(vim.json.decode, raw_output)
   if not ok or type(data) ~= 'table' then
@@ -33,8 +33,8 @@ function M.build_gemini_command(context, model_id, api_key)
   return { 'curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body }
 end
 
--- `ant` (CLI oficial da Anthropic) foi descartado do lado Vim 2026-07-20 --
--- sem vantagem de billing pro caso de uso deste plugin. So key estatica.
+-- `ant` (Anthropic's official CLI) was dropped on the Vim side on 2026-07-20
+-- -- no billing advantage for this plugin's use case. Static key only.
 function M.build_claude_command(context, model, api_key)
   local body = M.build_claude_request(context, model)
   return {
@@ -45,11 +45,11 @@ function M.build_claude_command(context, model, api_key)
   }
 end
 
--- Candidate bloqueado (filtro de seguranca, finishReason SAFETY/RECITATION)
--- vem SEM "content" ou sem "parts" -- resposta HTTP 200 legitima, so sem
--- sugestao de verdade. Achado real, reportado pelo Alberto 2026-07-22
--- (smoke test ao vivo): "attempt to index field 'parts' (a nil value)"
--- quando o acesso direto nao tinha guarda.
+-- A blocked candidate (safety filter, finishReason SAFETY/RECITATION) comes
+-- back WITHOUT "content", or without "parts" -- a legitimate HTTP 200
+-- response, just with no actual suggestion. Real finding, reported from a
+-- live smoke test on 2026-07-22: "attempt to index field 'parts' (a nil
+-- value)" when the direct access had no guard.
 function M.parse_gemini_response(body)
   local ok, data = pcall(vim.json.decode, body)
   if not ok or type(data) ~= 'table' or type(data.candidates) ~= 'table' or #data.candidates == 0 then
@@ -76,11 +76,11 @@ function M.parse_claude_response(body)
   return vim.split(text, '\n', { plain = true, trimempty = false })
 end
 
--- Cada familia de API implementa duas operacoes com assinatura uniforme:
--- build_command(context, model_id, api_key) -> lista de argv pro vim.system
--- parse_response(body) -> lista de linhas da sugestao
--- Adicionar uma familia nova (ex: OpenAI) exige implementar essas duas
--- funcoes e registrar aqui -- mesmo "escape hatch" do lado Vim.
+-- Every API family implements two operations with a uniform signature:
+-- build_command(context, model_id, api_key) -> argv list for vim.system
+-- parse_response(body) -> list of suggestion lines
+-- Adding a new family (e.g. OpenAI) means implementing those two functions
+-- and registering them here -- the same escape hatch as on the Vim side.
 function M.family_handler(family_name)
   local handlers = {
     gemini = { build_command = M.build_gemini_command, parse_response = M.parse_gemini_response },
@@ -88,22 +88,22 @@ function M.family_handler(family_name)
   }
   local handler = handlers[family_name]
   if not handler then
-    error('vim-ai-autocomplete: familia desconhecida "' .. family_name .. '"')
+    error('vim-ai-autocomplete: unknown family "' .. family_name .. '"')
   end
   return handler
 end
 
--- Antes, qualquer falha (exit != 0, ou resposta de erro da API) resultava
--- em nenhuma sugestao aparecer e NENHUM aviso -- mesmo achado do lado Vim.
--- Retorna nil quando nao ha nada de errado pra reportar (resposta vazia
--- legitima, ex: cursor no fim de um arquivo completo).
+-- Previously any failure (exit != 0, or an error response from the API) meant
+-- no suggestion appeared and NO warning was shown -- same finding as on the
+-- Vim side. Returns nil when there is nothing wrong to report (a legitimately
+-- empty response, e.g. the cursor at the end of a complete file).
 function M.describe_completion_failure(provider, status, raw_output)
   local message = M.extract_api_error_message(raw_output)
   if message then
     return string.format('vim-ai-autocomplete (%s): %s', provider, message)
   end
   if status ~= 0 then
-    return string.format('vim-ai-autocomplete (%s): request falhou (exit %d), sem detalhe na resposta', provider, status)
+    return string.format('vim-ai-autocomplete (%s): request failed (exit %d), no detail in the response', provider, status)
   end
   return nil
 end

@@ -1,9 +1,9 @@
 local M = {}
 
--- A linha ATUAL (onde o cursor esta de verdade) nunca deveria entrar
--- inteira nem em "antes" nem em "depois" -- precisa ser cortada na coluna
--- do cursor. Mesmo achado do lado Vim (2026-07-20): sem isso, o modelo nao
--- sabe onde o cursor realmente esta dentro da linha.
+-- The CURRENT line (the one the cursor is really on) should never go in whole
+-- into either "before" or "after" -- it has to be split at the cursor column.
+-- Same finding as on the Vim side (2026-07-20): without this the model has no
+-- idea where the cursor actually sits inside the line.
 function M.split_lines_at_cursor(lines_before_full, current_line, col, lines_after_full)
   local before_part = col > 1 and current_line:sub(1, col - 1) or ''
   local after_part = current_line:sub(col)
@@ -14,16 +14,16 @@ function M.split_lines_at_cursor(lines_before_full, current_line, col, lines_aft
   return before, after
 end
 
--- strcharpart/strchars (nao string:sub) pra cortar por CARACTERE, nao byte
--- -- multibyte-safe, mesmo criterio do lado Vim.
+-- strcharpart/strchars (not string:sub) so the cut happens per CHARACTER, not
+-- per byte -- multibyte-safe, same criterion as the Vim side.
 function M.build_context(lines_before, lines_after, max_chars)
   local before = table.concat(lines_before, '\n')
   local after = table.concat(lines_after, '\n')
   local total = #before + #after
   if total > max_chars then
-    -- mais peso pro texto ANTES do cursor (75/25) -- mesmo criterio do
-    -- lado Vim (e do context_ratio do minuet-ai.nvim que este plugin
-    -- substitui).
+    -- more weight to the text BEFORE the cursor (75/25) -- same criterion as
+    -- the Vim side (and as the context_ratio of the minuet-ai.nvim this
+    -- plugin replaces).
     local before_budget = math.floor(max_chars * 0.75)
     local after_budget = max_chars - before_budget
     before = vim.fn.strcharpart(before, math.max(0, vim.fn.strchars(before) - before_budget))
@@ -32,10 +32,10 @@ function M.build_context(lines_before, lines_after, max_chars)
   return { before = before, after = after }
 end
 
--- Nomes de tipo de no que contam como "escopo" pra priorizar como contexto
--- -- cobre os casos mais comuns entre as gramaticas Treesitter usadas neste
--- setup (Python, JS/TS, Ruby, Go, Elixir). Lista deliberadamente pequena --
--- linguagem sem tipo aqui simplesmente cai no fallback (nunca erro).
+-- Node type names that count as a "scope" worth prioritising as context --
+-- covers the most common cases across the Treesitter grammars used in this
+-- setup (Python, JS/TS, Ruby, Go, Elixir). The list is deliberately small: a
+-- language missing from it simply falls back (never an error).
 local SCOPE_NODE_TYPES = {
   function_definition = true,
   function_declaration = true,
@@ -43,23 +43,23 @@ local SCOPE_NODE_TYPES = {
   class_definition = true,
   class_declaration = true,
   arrow_function = true,
-  module = false, -- nunca usar o arquivo inteiro como "escopo"
+  module = false, -- never use the whole file as a "scope"
 }
 
--- Em vez de cortar ~100 linhas antes do cursor as cegas, acha o no de
--- funcao/classe que contem o cursor via Treesitter e usa a primeira linha
--- DESSE escopo como o corte de "antes". Sempre com fallback: sem parser
--- disponivel pra filetype, ou sem escopo encontrado, retorna nil (quem
--- chama cai pro corte por linhas de sempre).
+-- Instead of blindly cutting ~100 lines before the cursor, find the
+-- function/class node containing the cursor through Treesitter and use the
+-- first line of THAT scope as the "before" cut. Always with a fallback: no
+-- parser available for the filetype, or no scope found, returns nil (the
+-- caller falls back to the usual line-based cut).
 function M.treesitter_scope_start_line(bufnr, lnum, col)
   local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
   if not ok or not parser then
     return nil
   end
-  -- Garante que a arvore esteja parseada antes de consultar o no: num
-  -- buffer recem-carregado (ou headless) o Treesitter ainda nao rodou, e
-  -- get_node retornaria nil -- caindo pro fallback mesmo com parser
-  -- disponivel. parse() e incremental (barato) e torna o escopo confiavel.
+  -- Make sure the tree is parsed before querying the node: in a freshly
+  -- loaded (or headless) buffer Treesitter has not run yet and get_node would
+  -- return nil -- falling back even though a parser was available. parse() is
+  -- incremental (cheap) and makes the scope reliable.
   pcall(function() parser:parse() end)
   local ok2, node = pcall(vim.treesitter.get_node, { bufnr = bufnr, pos = { lnum - 1, math.max(0, col - 1) } })
   if not ok2 or not node then
@@ -101,11 +101,11 @@ local function collect_identifier_nodes(node, bufnr, limit)
   return result
 end
 
--- Dispara textDocument/definition pros identificadores do escopo atual,
--- com timeout curto -- se o LSP nao responder a tempo, ou nao houver
--- cliente ativo pro buffer, retorna lista vazia sem bloquear o
--- autocomplete. Limitado a 5 identificadores unicos pra manter o custo
--- previsivel dentro do timeout.
+-- Fires textDocument/definition for the identifiers in the current scope,
+-- with a short timeout -- if the LSP does not answer in time, or there is no
+-- client attached to the buffer, returns an empty list without blocking the
+-- completion. Capped at 5 unique identifiers to keep the cost predictable
+-- within the timeout.
 function M.lsp_related_definitions(bufnr, scope_node, timeout_ms)
   if not scope_node then
     return {}
@@ -148,10 +148,10 @@ local function slice_lines(lines, first, last)
   return out
 end
 
--- Monta a secao extra do prompt com um trecho pequeno de cada definicao
--- encontrada. Le o arquivo do disco (nao precisa que esteja aberto num
--- buffer) -- se a leitura falhar (arquivo remoto, permissao), pula essa
--- definicao silenciosamente, nunca quebra o prompt inteiro.
+-- Builds the extra prompt section with a small excerpt of each definition
+-- found. Reads the file from disk (it does not need to be open in a buffer)
+-- -- if the read fails (remote file, permissions), that definition is skipped
+-- silently, never breaking the whole prompt.
 function M.build_related_definitions_section(definitions, max_lines_per_def)
   if #definitions == 0 then
     return ''
@@ -175,7 +175,7 @@ function M.build_related_definitions_section(definitions, max_lines_per_def)
   if #parts == 0 then
     return ''
   end
-  return '\n\nDEFINICOES RELACIONADAS:\n' .. table.concat(parts, '\n---\n')
+  return '\n\nRELATED DEFINITIONS:\n' .. table.concat(parts, '\n---\n')
 end
 
 return M

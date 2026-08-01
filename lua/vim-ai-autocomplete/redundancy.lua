@@ -4,9 +4,10 @@ local PAIRS = { ['('] = ')', ['['] = ']', ['{'] = '}' }
 local CLOSERS = ')]}"\'`'
 local QUOTES = '"\'`'
 
--- g:AutoPairs (lado Vim) fecha (){}[] E aspas simples/duplas/crase --
--- brackets sao ASSIMETRICOS (empilha de verdade), aspas SIMETRICAS
--- (alternam: se o topo da pilha ja e essa mesma aspa, fecha; senao abre).
+-- g:AutoPairs (Vim side) closes (){}[] AND single/double/back quotes --
+-- brackets are ASYMMETRIC (they really nest), quotes are SYMMETRIC (they
+-- alternate: if the top of the stack already is that same quote it closes,
+-- otherwise it opens).
 local function advance_bracket_stack(stack, text)
   for _, char in ipairs(vim.fn.split(text, '\\zs')) do
     if QUOTES:find(char, 1, true) then
@@ -24,14 +25,15 @@ local function advance_bracket_stack(stack, text)
   return stack
 end
 
--- Cobre o caso em que o cursor esta ANTES do proprio abre-parenteses (nao
--- DENTRO do par ja aberto pelo auto-pairs) -- "antes" nao tem nenhum
--- bracket/aspa pendente (depth_before == 0), entao o calculo estrutural
--- nunca acha nada pra fechar, e o par vazio intacto em "depois" (ex: "()"
--- do auto-pairs) nao bate textualmente com o fim da sugestao. A sugestao,
--- sem saber que esse par vazio existe, escreve sua PROPRIA versao completa
--- do par -- o par vazio original fica orfao no final. So descarta se a
--- sugestao de fato USA esse mesmo tipo de bracket/aspa em algum lugar.
+-- Covers the case where the cursor sits BEFORE the opening bracket itself
+-- (not INSIDE the pair auto-pairs already opened) -- "before" has no pending
+-- bracket/quote (depth_before == 0), so the structural computation never
+-- finds anything to close, and the untouched empty pair in "after" (e.g. the
+-- "()" from auto-pairs) does not match the end of the suggestion textually.
+-- The suggestion, unaware that this empty pair exists, writes its OWN
+-- complete version of the pair -- leaving the original empty pair orphaned at
+-- the end. Only discards when the suggestion does USE that same kind of
+-- bracket/quote somewhere.
 function M.count_leading_trivial_pair_redundancy(suggestion_text, after_text)
   if #after_text < 2 then
     return 0
@@ -54,19 +56,20 @@ function M.count_leading_trivial_pair_redundancy(suggestion_text, after_text)
   return 0
 end
 
--- Cobre sobreposicao de ESTRUTURA: quando a sugestao fecha, com seu proprio
--- texto, um parenteses/colchete/chave/aspa que ja estava aberto ANTES do
--- cursor, o fechamento real que ja existe em "depois" fica orfao. Retorna
--- quantos caracteres do INICIO de "depois" devem ser descartados ao aceitar.
+-- Covers STRUCTURAL overlap: when the suggestion closes, with its own text, a
+-- bracket/brace/quote that was already open BEFORE the cursor, the real
+-- closing character sitting in "after" is left orphaned. Returns how many
+-- characters from the START of "after" must be discarded on accept.
 function M.count_redundant_after_chars(before_text, suggestion_text, after_text)
   local stack = advance_bracket_stack({}, before_text)
   local depth_before = #stack
   stack = advance_bracket_stack(stack, suggestion_text)
   local redundant = math.max(0, depth_before - #stack)
   if redundant > 0 then
-    -- so descarta se "depois" realmente comecar com essa quantidade de
-    -- fechamentos -- senao pode nao ser o mesmo bracket/aspa, melhor nao
-    -- arriscar apagar algo que nao e obviamente redundante.
+    -- only discards when "after" really does start with that many closing
+    -- characters -- otherwise it might not be the same bracket/quote, and it
+    -- is better not to risk deleting something that is not obviously
+    -- redundant.
     local n = 0
     while n < redundant and n < #after_text do
       local char = after_text:sub(n + 1, n + 1)
@@ -81,11 +84,11 @@ function M.count_redundant_after_chars(before_text, suggestion_text, after_text)
   return M.count_leading_trivial_pair_redundancy(suggestion_text, after_text)
 end
 
--- Acha a maior sobreposicao entre o FIM da sugestao e o INICIO do texto
--- "depois" (o que sobra depois de ja descontar a redundancia estrutural --
--- ver request.lua). So CALCULA o tamanho -- NAO corta a sugestao (as duas
--- fontes de redundancia se SOMAM num so redundant_after, mesmo tratamento
--- visual pros dois).
+-- Finds the longest overlap between the END of the suggestion and the START
+-- of the "after" text (whatever is left once structural redundancy has been
+-- accounted for -- see request.lua). It only COMPUTES the length -- it does
+-- NOT trim the suggestion (both sources of redundancy ADD UP into a single
+-- redundant_after, with the same visual treatment).
 function M.compute_text_overlap_length(lines, after_text)
   if #lines == 0 or after_text == '' then
     return 0
@@ -102,27 +105,29 @@ function M.compute_text_overlap_length(lines, after_text)
   return 0
 end
 
--- Tira do FIM da sugestao EXIBIDA os caracteres que ja existem, identicos, no
--- buffer logo depois do cursor -- assim a tela mostra exatamente o texto final
--- (um ')' so) em vez de ')' da sugestao + ')' real riscado. O ghost text e'
--- virtual inline: cada caractere dele empurra o texto real da linha pra
--- direita, entao mostrar o fechamento duas vezes afastava o ')' real do cursor
--- e a linha "pulava" a cada tecla (relatado em markdown, onde a sugestao e'
--- longa e vem a cada tecla).
+-- Trims from the END of the DISPLAYED suggestion the characters that already
+-- exist, identical, in the buffer right after the cursor -- so the screen
+-- shows exactly the final text (a single ')') instead of the suggestion's
+-- ')' plus the real one struck through. Ghost text is inline virtual text:
+-- every one of its characters pushes the real line to the right, so showing
+-- the closing character twice moved the real ')' away from the cursor and
+-- made the line reflow on every keystroke (reported while writing markdown,
+-- where suggestions are long and arrive on every keystroke).
 --
--- So corta quando a sugestao TERMINA com esses caracteres. Fechamento no MEIO
--- da sugestao (ex: 'x) { return; }' fechando um '(' anterior) continua sendo
--- resolvido descartando o caractere real, porque cortar a cauda ali produziria
--- texto errado. Retorna (lines, redundant_after) ajustados -- o texto final
--- apos aceitar e' identico ao de antes do corte, so muda o que aparece.
+-- It only trims when the suggestion ENDS with those characters. A closing
+-- character in the MIDDLE of the suggestion (e.g. 'x) { return; }' closing an
+-- earlier '(') keeps being handled by discarding the real character, because
+-- trimming the tail there would produce wrong text. Returns the adjusted
+-- (lines, redundant_after) -- the text produced on accept is identical to
+-- what it was before the trim, only what is displayed changes.
 function M.split_display_tail(lines, after_text, redundant_after)
   redundant_after = redundant_after or 0
   if #lines == 0 or redundant_after <= 0 then
     return lines, redundant_after
   end
   local suggestion_text = table.concat(lines, '\n')
-  -- keep = quantos caracteres reais continuam sendo descartados. Procura do
-  -- corte maior (keep 0) pro menor, parando no primeiro que casa.
+  -- keep = how many real characters stay discarded. Searches from the largest
+  -- trim (keep 0) down to the smallest, stopping at the first match.
   for keep = 0, redundant_after - 1 do
     local tail = after_text:sub(keep + 1, redundant_after)
     if #tail <= #suggestion_text and suggestion_text:sub(-#tail) == tail then
@@ -136,10 +141,10 @@ function M.split_display_tail(lines, after_text, redundant_after)
   return lines, redundant_after
 end
 
--- Alguns modelos tratam a resposta como continuacao literal de bytes: se o
--- contexto termina em ":" (abertura de bloco Python), a primeira linha da
--- sugestao vem sem quebra de linha nem indentacao propria -- mesmo achado
--- do lado Vim (confirmado com gemini-3.1-flash-lite).
+-- Some models treat the response as a literal continuation of bytes: when the
+-- context ends in ":" (a Python block opener), the first line of the
+-- suggestion comes with no line break and no indentation of its own -- same
+-- finding as on the Vim side (confirmed with gemini-3.1-flash-lite).
 function M.adjust_suggestion_lines(lines, current_line_before_cursor, filetype, shiftwidth, expandtab)
   if #lines == 0 or filetype ~= 'python' then
     return lines
@@ -149,7 +154,7 @@ function M.adjust_suggestion_lines(lines, current_line_before_cursor, filetype, 
     return lines
   end
   if lines[1] == '' then
-    -- ja veio com quebra de linha propria -- nao mexe
+    -- it already came with a line break of its own -- leave it alone
     return lines
   end
   local indent_str = expandtab and string.rep(' ', shiftwidth) or '\t'

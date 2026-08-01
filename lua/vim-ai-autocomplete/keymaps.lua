@@ -6,9 +6,10 @@ local M = {}
 
 local tab_fallback = { rhs = '\t', is_expr = false, callback = nil }
 
--- Mapeamentos baseados em callback Lua (ex: blink.cmp, "pula pro proximo
--- placeholder do snippet ou cai pro Tab normal") nao tem 'rhs' classico --
--- get() com default cobre os dois formatos, mesmo fallback do lado Vim.
+-- Mappings backed by a Lua callback (e.g. blink.cmp's "jump to the next
+-- snippet placeholder or fall back to a normal Tab") have no classic 'rhs' --
+-- reading it with a default covers both shapes, same fallback as the Vim
+-- side.
 function M.setup_tab_wrap()
   local original = vim.fn.maparg('<Tab>', 'i', false, true)
   if original and original.lhs then
@@ -33,15 +34,15 @@ function M.tab_handler()
   return tab_fallback.rhs
 end
 
--- Descarta a sugestao SEM sair do insert mode. Antes isso vivia num wrap do
--- <Esc>, que engolia a tecla sempre que havia sugestao visivel: o usuario
--- apertava <Esc> pra sair do insert, continuava no insert, e as teclas
--- seguintes entravam como texto no buffer (reproduzido em markdown, onde a
--- sugestao esta visivel quase o tempo todo). Uma tecla nao pode ter dois
--- significados sem o usuario conseguir prever qual vale, entao <Esc> voltou
--- a ser so <Esc> -- a sugestao e' limpa pelo autocmd InsertLeavePre -- e o
--- descarte-sem-sair ganhou tecla propria. <C-]> e' a mesma escolha do
--- copilot.vim pra dispensar sugestao.
+-- Dismisses the suggestion WITHOUT leaving insert mode. This used to live in
+-- an <Esc> wrap that swallowed the key whenever a suggestion was visible: the
+-- user pressed <Esc> to leave insert mode, stayed in insert mode, and the
+-- following keystrokes landed in the buffer as text (reproduced while writing
+-- markdown, where a suggestion is visible almost all the time). One key
+-- cannot carry two meanings when the user has no way to predict which one
+-- applies, so <Esc> is plain <Esc> again -- the suggestion is cleared by the
+-- InsertLeavePre autocmd -- and dismiss-without-leaving got a key of its own.
+-- <C-]> is the same choice copilot.vim makes for dismissing a suggestion.
 function M.dismiss()
   ghost_text.clear_suggestion()
   return ''
@@ -54,15 +55,15 @@ function M.toggle_auto_trigger()
   end
   local new_value = (current ~= 0) and 0 or 1
   vim.g.vim_ai_autocomplete_auto_trigger = new_value
-  vim.notify('vim-ai-autocomplete: auto-trigger ' .. (new_value == 1 and 'ligado' or 'desligado'))
+  vim.notify('vim-ai-autocomplete: auto-trigger ' .. (new_value == 1 and 'on' or 'off'))
 end
 
--- Generaliza a checagem de key -- dispara uma chamada leve pro modelo pra
--- qual acabou de trocar; se der erro, so AVISA -- nao reverte mais pro
--- modelo anterior (antes revertia automaticamente; mudanca pedida pelo
--- Alberto 2026-07-22: "quero que a pessoa possa ciclar a vontade", ex:
--- ,pr repetido pra tentar os modelos seguintes mesmo depois de um aviso de
--- credito, sem ficar precisando trocar de volta manualmente).
+-- Generalises the key check -- fires a cheap call against the model just
+-- switched to; on error it only WARNS, it no longer reverts to the previous
+-- model (it used to revert automatically; changed on request 2026-07-22, "I
+-- want to be able to cycle freely", e.g. pressing ,pr repeatedly to try the
+-- next models even after a credit warning, without having to switch back by
+-- hand).
 function M.on_model_key_check_exit(checked_name, chunks)
   local message = family.extract_api_error_message(table.concat(chunks, ''))
   if not message then
@@ -94,11 +95,11 @@ function M.select_model(name)
   local active = models.active_models()
   local model = models.find_model_by_name(active, name)
   if not model then
-    vim.notify('vim-ai-autocomplete: modelo "' .. name .. '" nao existe ou nao esta ativo (sem API key)', vim.log.levels.ERROR)
+    vim.notify('vim-ai-autocomplete: model "' .. name .. '" does not exist or is not active (no API key)', vim.log.levels.ERROR)
     return
   end
   vim.g.vim_ai_autocomplete_provider = name
-  vim.notify('vim-ai-autocomplete: provider agora e ' .. name)
+  vim.notify('vim-ai-autocomplete: provider is now ' .. name)
   M.check_model_key(name)
 end
 
@@ -116,7 +117,7 @@ function M.toggle_provider()
   end
   local next_idx = (idx % #names) + 1
   vim.g.vim_ai_autocomplete_provider = names[next_idx]
-  vim.notify('vim-ai-autocomplete: provider agora e ' .. vim.g.vim_ai_autocomplete_provider)
+  vim.notify('vim-ai-autocomplete: provider is now ' .. vim.g.vim_ai_autocomplete_provider)
   M.check_model_key(vim.g.vim_ai_autocomplete_provider)
 end
 
@@ -131,10 +132,10 @@ function M.complete_model_names(arglead)
   return result
 end
 
--- active_models: lista JA FILTRADA (ver models.active_models()) -- so
--- registra ,pr e :VimAiAutocompleteModel com 2+ modelos ativos, mesma
--- regra do lado Vim. <leader>pr, nao <leader>ap/<leader>pv -- mesmas
--- colisoes ja documentadas do lado Vim/minuet.
+-- active_models: the ALREADY FILTERED list (see models.active_models()) --
+-- registers ,pr and :VimAiAutocompleteModel only with 2+ active models, same
+-- rule as the Vim side. <leader>pr, not <leader>ap/<leader>pv -- same
+-- collisions already documented on the Vim/minuet side.
 function M.setup_provider_toggle(active_models)
   if #active_models >= 2 then
     vim.keymap.set('n', '<leader>pr', M.toggle_provider, { silent = true, desc = 'vim-ai-autocomplete: toggle provider' })
@@ -147,18 +148,18 @@ function M.setup_provider_toggle(active_models)
   end
 end
 
--- Extra exclusivo do Neovim: seleciona o modelo via vim.ui.select em vez de
--- digitar :VimAiAutocompleteModel <nome> de cor. Funciona com Telescope
--- automaticamente se instalado (Telescope substitui o handler global de
--- vim.ui.select) -- nao precisamos detectar Telescope, e assim que
--- vim.ui.select ja funciona por design.
+-- Neovim-only extra: pick the model through vim.ui.select instead of typing
+-- :VimAiAutocompleteModel <name> from memory. Works with Telescope
+-- automatically when installed (Telescope replaces the global vim.ui.select
+-- handler) -- no Telescope detection needed, that is how vim.ui.select is
+-- meant to work.
 function M.open_model_picker()
   local active = models.active_models()
   local names = {}
   for _, m in ipairs(active) do
     table.insert(names, m.name)
   end
-  vim.ui.select(names, { prompt = 'vim-ai-autocomplete: escolha o modelo' }, function(choice)
+  vim.ui.select(names, { prompt = 'vim-ai-autocomplete: pick a model' }, function(choice)
     if choice then
       M.select_model(choice)
     end

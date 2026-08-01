@@ -3,45 +3,46 @@ if exists('g:loaded_vim_ai_autocomplete')
 endif
 let g:loaded_vim_ai_autocomplete = 1
 
-" Plugin so-Vim (usa maparg().rhs assumindo o formato classico de mapeamento
-" do CoC, e job_start(), API exclusiva do Vim). ~/.vimrc e sourced dentro do
-" Neovim tambem (nvim/init.vim), entao esse plugin carregava la e quebrava:
-" job_start() nao existe no Neovim (E117), e o <Tab> de blink.cmp (callback
-" Lua, sem chave 'rhs') dispara E716 em SetupTabWrap -- os dois em TODA
-" inicializacao do Neovim, reportado pelo Alberto ("Press ENTER" ao abrir).
-" O Neovim ja tem o equivalente nativo (minuet-ai.nvim, nvim/lua/user/minuet.lua,
-" usa jobstart() -- API async correta do Neovim), entao esse plugin nunca
-" deveria rodar la.
+" Vim-only plugin (it reads maparg().rhs assuming CoC's classic mapping shape,
+" and uses job_start(), a Vim-exclusive API). ~/.vimrc is sourced inside
+" Neovim as well (nvim/init.vim), so this plugin used to load there and break:
+" job_start() does not exist in Neovim (E117), and blink.cmp's <Tab> (a Lua
+" callback, with no 'rhs' key) throws E716 in SetupTabWrap -- both on EVERY
+" Neovim startup, reported as a "Press ENTER" prompt on open. Neovim has its
+" own native equivalent (the Lua port in lua/vim-ai-autocomplete/, which uses
+" vim.system() -- the correct async API there), so this plugin should never
+" run under Neovim.
 if has('nvim')
   finish
 endif
 
-" Arquitetura de ghost-text (debounce + prop_add + wrap do mapeamento de Tab)
-" inspirada na tecnica publica do github/copilot.vim (APIs do Vim 9: prop_add,
-" timer_start, textprop) -- implementacao propria, sem codigo copiado. O
-" copilot.vim e "All Rights Reserved" (nao open-source), so a tecnica com
-" APIs publicas do Vim foi reaproveitada.
+" The ghost-text architecture (debounce plus prop_add plus wrapping the Tab
+" mapping) is inspired by the public technique of github/copilot.vim (Vim 9
+" APIs: prop_add, timer_start, textprop) -- own implementation, no code
+" copied. copilot.vim is "All Rights Reserved" (not open source); only the
+" technique, built on public Vim APIs, was reused.
 
-" O default nao pode ser mais o literal 'gemini' hardcoded -- com N modelos
-" configuraveis (g:vim_ai_autocomplete_models), o primeiro modelo ativo pode
-" ter QUALQUER nome (ex: 'gemini-flash'). Resolve via a mesma logica que
-" RequestCompletion usa, senao o provider mostrado (,pr/:messages) fica
-" errado ate a primeira troca manual, mesmo a completion em si ja caindo
-" certo no fallback (achado real, testando modelos com nomes customizados).
+" The default can no longer be the hardcoded literal 'gemini' -- with N
+" configurable models (g:vim_ai_autocomplete_models), the first active model
+" may have ANY name (e.g. 'gemini-flash'). Resolve it through the same logic
+" RequestCompletion uses, otherwise the provider shown (,pr/:messages) stays
+" wrong until the first manual switch, even though the completion itself
+" already falls back correctly (real finding, while testing models with
+" custom names).
 let g:vim_ai_autocomplete_provider = get(g:, 'vim_ai_autocomplete_provider',
       \ vim_ai_autocomplete#ResolveDefaultModel(
       \   get(g:, 'vim_ai_autocomplete_models', vim_ai_autocomplete#DefaultModels()),
       \   vim_ai_autocomplete#ActiveModels())[0])
 let g:vim_ai_autocomplete_auto_trigger = get(g:, 'vim_ai_autocomplete_auto_trigger', 1)
 
-" ,pt nao depende de API key (so liga/desliga o debounce automatico), entao
-" e registrado direto aqui -- diferente de ,pr (SetupProviderToggle), que so
-" existe se houver mais de um provider pra alternar.
+" ,pt does not depend on an API key (it only toggles the automatic debounce),
+" so it is registered right here -- unlike ,pr (SetupProviderToggle), which
+" only exists when there is more than one provider to cycle through.
 nnoremap <silent> <leader>pt :call vim_ai_autocomplete#ToggleAutoTrigger()<CR>
 
-" Descarta a sugestao sem sair do insert mode. Fica numa tecla propria (e nao
-" mais num wrap do <Esc>) pra que <Esc> continue sendo so <Esc> -- ver
-" vim_ai_autocomplete#Dismiss().
+" Dismisses the suggestion without leaving insert mode. It lives on a key of
+" its own (and no longer in an <Esc> wrap) so that <Esc> stays plain <Esc> --
+" see vim_ai_autocomplete#Dismiss().
 inoremap <script><silent><expr> <C-]> vim_ai_autocomplete#Dismiss()
 
 augroup vim_ai_autocomplete

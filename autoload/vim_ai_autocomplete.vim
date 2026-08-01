@@ -1,5 +1,5 @@
-" Default preservando exatamente o comportamento de hoje (Gemini + Claude,
-" mesmos model_id) quando o usuario nao define g:vim_ai_autocomplete_models.
+" Default that preserves exactly what the plugin does today (Gemini plus
+" Claude, same model_ids) when the user does not set g:vim_ai_autocomplete_models.
 function! vim_ai_autocomplete#DefaultModels() abort
   return [
         \ {'name': 'gemini', 'family': 'gemini', 'model_id': 'gemini-3.1-flash-lite', 'api_key_env': 'GEMINI_API_KEY'},
@@ -7,19 +7,19 @@ function! vim_ai_autocomplete#DefaultModels() abort
         \ ]
 endfunction
 
-" Filtra a lista crua (de g:vim_ai_autocomplete_models ou do default) pelos
-" modelos cuja api_key_env esta de fato setada e nao-vazia no ambiente --
-" essa e a lista "ativa" que entra no rodizio do ,pr / :VimAiAutocompleteModel.
-" Nomes duplicados: so a PRIMEIRA ocorrencia entra (deterministico), as
-" seguintes sao ignoradas e reportadas em "warnings" (a funcao e pura --
-" quem chama decide o que fazer com os avisos, ex: echoerr).
+" Filters the raw list (from g:vim_ai_autocomplete_models, or the default)
+" down to the models whose api_key_env is actually set and non-empty in the
+" environment -- that is the "active" list feeding the ,pr / :VimAiAutocompleteModel
+" rotation. Duplicate names: only the FIRST occurrence gets in
+" (deterministic), the rest are ignored and reported in "warnings" (the
+" function is pure -- the caller decides what to do with them, e.g. echoerr).
 function! vim_ai_autocomplete#ResolveActiveModels(models) abort
   let active = []
   let warnings = []
   let seen_names = {}
   for model in a:models
     if has_key(seen_names, model.name)
-      call add(warnings, 'modelo duplicado "' . model.name . '" em g:vim_ai_autocomplete_models -- ignorando')
+      call add(warnings, 'duplicate model "' . model.name . '" in g:vim_ai_autocomplete_models -- ignoring')
       continue
     endif
     let seen_names[model.name] = 1
@@ -40,13 +40,13 @@ function! vim_ai_autocomplete#FindModelByName(models, name) abort
   return v:null
 endfunction
 
-" Ponto de entrada publico: le g:vim_ai_autocomplete_models (ou o default
-" se o usuario nao configurou nada), resolve a lista ativa, e reporta
-" (echohl WarningMsg + echomsg, NAO echoerr -- echoerr lanca excecao e
-" aborta a funcao antes do "return active", quebrando a autocomplete
-" inteira a cada keystroke quando ha um aviso, ex: nome duplicado)
-" qualquer aviso de config invalida. ResolveActiveModels() continua pura,
-" o efeito colateral fica so aqui.
+" Public entry point: reads g:vim_ai_autocomplete_models (or the default when
+" the user configured nothing), resolves the active list, and reports any
+" invalid-config warning (echohl WarningMsg + echomsg, NOT echoerr -- echoerr
+" throws an exception and aborts the function before "return active",
+" breaking the whole completion on every keystroke whenever a warning exists,
+" e.g. a duplicate name). ResolveActiveModels() stays pure; the side effect
+" lives only here.
 function! vim_ai_autocomplete#ActiveModels() abort
   let models = get(g:, 'vim_ai_autocomplete_models', vim_ai_autocomplete#DefaultModels())
   let [active, warnings] = vim_ai_autocomplete#ResolveActiveModels(models)
@@ -58,31 +58,31 @@ function! vim_ai_autocomplete#ActiveModels() abort
   return active
 endfunction
 
-" Generaliza o antigo ResolveProvider(has_gemini, has_claude): decide o
-" modelo default e se precisa avisar/travar, a partir da lista de modelos
-" ATIVOS (ja filtrada por ResolveActiveModels). all_models e usada so pra
-" listar as api_key_env configuradas na mensagem de erro (nao importa
-" quais estao ativas -- o usuario quer saber o que configurar).
+" Generalises the old ResolveProvider(has_gemini, has_claude): decides the
+" default model and whether to warn or hard-stop, starting from the ACTIVE
+" model list (already filtered by ResolveActiveModels). all_models is only
+" used to list the configured api_key_env names in the error message (which
+" ones are active does not matter -- the user wants to know what to set up).
 function! vim_ai_autocomplete#ResolveDefaultModel(all_models, active_models) abort
   if empty(a:active_models)
     let env_names = map(copy(a:all_models), 'v:val.api_key_env')
-    return [v:null, 'error', 'nenhuma API key encontrada (' . join(env_names, ' nem ') . ') -- configure pelo menos uma']
+    return [v:null, 'error', 'no API key found (' . join(env_names, ' nor ') . ') -- configure at least one']
   endif
   if len(a:active_models) == 1
     let name = a:active_models[0].name
-    return [name, 'warn', printf('so %s disponivel -- toggle ,pr desabilitado', name)]
+    return [name, 'warn', printf('only %s available -- the ,pr toggle is disabled', name)]
   endif
   return [a:active_models[0].name, v:null, v:null]
 endfunction
 
-" A linha ATUAL (onde o cursor esta de verdade) nunca deveria entrar
-" inteira nem em "antes" nem em "depois" -- precisa ser cortada na coluna
-" do cursor. Achado real (2026-07-20, reportado pelo Alberto): sem isso,
-" "def soma(" com cursor entre os parenteses que o auto-pairs ja inseriu
-" mandava a linha INTEIRA ("def soma()") pros DOIS lados do prompt FIM, sem
-" indicar onde o cursor realmente estava -- o modelo, confuso, chegou a
-" gerar "(a, b):\n    return a + b)" do zero, duplicando o parenteses de
-" abertura.
+" The CURRENT line (the one the cursor is really on) should never go in whole
+" into either "before" or "after" -- it has to be split at the cursor column.
+" Real finding (2026-07-20): without this, "def sum(" with the cursor between
+" the parentheses auto-pairs had just inserted sent the WHOLE line ("def
+" sum()") to BOTH sides of the FIM prompt, with no indication of where the
+" cursor actually was -- the model, confused, went as far as generating
+" "(a, b):\n    return a + b" from scratch, duplicating the opening
+" parenthesis.
 function! vim_ai_autocomplete#SplitLinesAtCursor(lines_before_full, current_line, col, lines_after_full) abort
   let before_part = a:col > 1 ? a:current_line[: a:col - 2] : ''
   let after_part = a:current_line[a:col - 1 :]
@@ -94,8 +94,8 @@ function! vim_ai_autocomplete#BuildContext(lines_before, lines_after, max_chars)
   let after = join(a:lines_after, "\n")
   let total = len(before) + len(after)
   if total > a:max_chars
-    " mais peso pro texto ANTES do cursor (75/25) -- mesmo criterio do
-    " context_ratio do minuet-ai.nvim no lado Neovim
+    " more weight to the text BEFORE the cursor (75/25) -- same criterion as
+    " the context_ratio of minuet-ai.nvim on the Neovim side
     let before_budget = float2nr(a:max_chars * 0.75)
     let after_budget = a:max_chars - before_budget
     let before = strcharpart(before, max([0, strchars(before) - before_budget]))
@@ -104,43 +104,43 @@ function! vim_ai_autocomplete#BuildContext(lines_before, lines_after, max_chars)
   return {'before': before, 'after': after}
 endfunction
 
-" Prompt estilo FIM (fill-in-the-middle): antes so mandavamos context.before,
-" entao o modelo nao tinha como saber que ja existe texto depois do cursor
-" (ex: o ")" que o auto-pairs ja inseriu ao abrir o parenteses) -- ele gerava
-" uma sugestao "as cegas" com seu proprio fechamento, e o Accept() preservava
-" o texto real depois do cursor tambem, duplicando (achado real, reportado
-" pelo Alberto: "empurra o caractere pos la pra depois da sugestao").
-" Confirmado com chamada real: SEM o "DEPOIS DO CURSOR" o modelo devolve
-" 'x):\n    return x * 2' pra "def foo(" (fecha o proprio parenteses); COM,
-" devolve so 'x, y' (sem duplicar). A instrucao sozinha nao e 100%
-" confiavel (outro teste real mostrou o modelo repetindo o sufixo inteiro
-" 3/3 vezes) -- por isso tambem existe ComputeTextOverlapLength() como
-" rede de seguranca no pos-processamento.
+" FIM-style prompt (fill-in-the-middle): we used to send only context.before,
+" so the model had no way to know text already exists after the cursor (e.g.
+" the ")" auto-pairs inserted when the parenthesis was opened) -- it produced
+" a suggestion "blind", with a closing character of its own, and Accept() kept
+" the real text after the cursor as well, duplicating it (real finding: "it
+" pushes the character after it past the suggestion").
+" Confirmed with a real call: WITHOUT the "AFTER THE CURSOR" block the model
+" returns 'x):\n    return x * 2' for "def foo(" (closing its own
+" parenthesis); WITH it, it returns just 'x, y' (no duplication). The
+" instruction alone is not 100% reliable (another real test showed the model
+" repeating the whole suffix 3/3 times) -- which is why
+" ComputeTextOverlapLength() also exists as a post-processing safety net.
 function! vim_ai_autocomplete#BuildGeminiRequest(context) abort
-  let prompt = "Complete o codigo a seguir. O cursor esta entre o texto ANTES e o texto DEPOIS, que ja existem no buffer. Responda SOMENTE com o texto que deve ser inserido ENTRE eles -- nao repita nada que ja aparece em ANTES ou DEPOIS. Sem explicacao, sem markdown.\n\nANTES DO CURSOR:\n" . a:context.before . "\n\nDEPOIS DO CURSOR:\n" . a:context.after
+  let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
   return json_encode({'contents': [{'parts': [{'text': prompt}]}]})
 endfunction
 
 function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
-  let prompt = "Complete o codigo a seguir. O cursor esta entre o texto ANTES e o texto DEPOIS, que ja existem no buffer. Responda SOMENTE com o texto que deve ser inserido ENTRE eles -- nao repita nada que ja aparece em ANTES ou DEPOIS. Sem explicacao, sem markdown.\n\nANTES DO CURSOR:\n" . a:context.before . "\n\nDEPOIS DO CURSOR:\n" . a:context.after
+  let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
   return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
 endfunction
 
-" Acha a maior sobreposicao entre o FIM da sugestao e o INICIO do texto
-" "depois" (o que sobra depois de ja descontar a redundancia estrutural
-" de CountRedundantAfterChars() -- ver s:OnExit). So CALCULA o tamanho da
-" sobreposicao -- NAO corta a sugestao. Antes (ate 2026-07-20) esta funcao
-" (TrimSuggestionOverlapWithAfter) cortava a sugestao silenciosamente
-" quando achava sobreposicao, o que escondia a mudanca do usuario -- o
-" cinza (ghost text) aparecia ajustado mas nunca ficava vermelho, ao
-" contrario do caso estrutural (parenteses/aspas), que sempre mostra o
-" caractere real redundante em vermelho antes de apagar. Unificado: agora
-" as DUAS fontes de redundancia (estrutural + sobreposicao textual) se
-" somam num so redundant_after, sempre com o mesmo tratamento visual
-" (achado real, reportado pelo Alberto: "o vermelho nao aparece nem com o
-" cinza ja escrito" -- o cinza tinha sido ajustado por este mecanismo,
-" mas nada ficava vermelho porque cortar o texto da sugestao e marcar
-" caractere real como redundante eram coisas diferentes).
+" Finds the longest overlap between the END of the suggestion and the START
+" of the "after" text (whatever is left once the structural redundancy from
+" CountRedundantAfterChars() has been accounted for -- see s:OnExit). It only
+" COMPUTES the overlap length -- it does NOT trim the suggestion. Previously
+" (until 2026-07-20) this function (TrimSuggestionOverlapWithAfter) trimmed
+" the suggestion silently whenever it found an overlap, which hid the change
+" from the user -- the grey ghost text showed up adjusted but never turned
+" red, unlike the structural case (brackets/quotes), which always shows the
+" real redundant character in red before deleting it. Unified: both sources
+" of redundancy (structural plus textual overlap) now add up into a single
+" redundant_after, always with the same visual treatment (real finding: "the
+" red never shows up, even with the grey already written" -- the grey had
+" been adjusted by this mechanism, but nothing turned red because trimming
+" the suggestion text and marking a real character as redundant were two
+" different things).
 function! vim_ai_autocomplete#ComputeTextOverlapLength(lines, after_text) abort
   if empty(a:lines) || empty(a:after_text)
     return 0
@@ -159,25 +159,25 @@ function! vim_ai_autocomplete#ComputeTextOverlapLength(lines, after_text) abort
   return 0
 endfunction
 
-" Tira do FIM da sugestao EXIBIDA os caracteres que ja existem, identicos, no
-" buffer logo depois do cursor -- assim a tela mostra exatamente o texto final
-" (um ')' so) em vez de ')' da sugestao + ')' real riscado. O ghost text e'
-" texto virtual: cada caractere dele empurra o texto real da linha pra
-" direita, entao mostrar o fechamento duas vezes afastava o ')' real do cursor
-" e a linha "pulava" a cada tecla.
+" Trims from the END of the DISPLAYED suggestion the characters that already
+" exist, identical, in the buffer right after the cursor -- so the screen
+" shows exactly the final text (a single ')') instead of the suggestion's
+" ')' plus the real one struck through. Ghost text is virtual text: every one
+" of its characters pushes the real line to the right, so showing the closing
+" character twice moved the real ')' away from the cursor and made the line
+" reflow on every keystroke.
 "
-" So corta quando a sugestao TERMINA com esses caracteres. Fechamento no MEIO
-" da sugestao (ex: 'x) { return; }' fechando um '(' anterior) continua sendo
-" resolvido descartando o caractere real, porque cortar a cauda ali produziria
-" texto errado. Retorna [lines, redundant_after] ajustados -- o texto final
-" apos aceitar e' identico ao de antes do corte, so muda o que aparece.
+" It only trims when the suggestion ENDS with those characters. A closing
+" character in the MIDDLE of the suggestion (e.g. 'x) { return; }' closing an
+" earlier '(') keeps being handled by discarding the real character, because
+" trimming the tail there would produce wrong text. Returns the adjusted
 function! vim_ai_autocomplete#SplitDisplayTail(lines, after_text, redundant_after) abort
   if empty(a:lines) || a:redundant_after <= 0
     return [a:lines, a:redundant_after]
   endif
   let suggestion_text = join(a:lines, "\n")
-  " keep = quantos caracteres reais continuam sendo descartados. Procura do
-  " corte maior (keep 0) pro menor, parando no primeiro que casa.
+  " keep = how many real characters stay discarded. Searches from the largest
+  " trim (keep 0) down to the smallest, stopping at the first match.
   let keep = 0
   while keep < a:redundant_after
     let tail = strpart(a:after_text, keep, a:redundant_after - keep)
@@ -194,22 +194,22 @@ function! vim_ai_autocomplete#SplitDisplayTail(lines, after_text, redundant_afte
   return [a:lines, a:redundant_after]
 endfunction
 
-" Cobre sobreposicao de ESTRUTURA: quando a sugestao fecha, com seu
-" proprio texto, um parenteses/colchete/chave/aspa que ja estava aberto
-" ANTES do cursor, o fechamento real que ja existe em "depois" (ex:
-" inserido pelo auto-pairs) fica orfao. Achado real (2026-07-20, "def
-" soma(" com cursor entre os parenteses): a sugestao "a, b):\n    return
-" a + b" fecha o proprio "(" de "def soma(" -- o ")" real sobrava no fim
-" do texto aceito ("def soma(a, b):\n    return a + b)"). Retorna quantos
-" caracteres do INICIO de "depois" devem ser descartados (nao inseridos
-" de volta) ao aceitar.
-" g:AutoPairs (plugins/auto-pairs) fecha (){}[]  E aspas simples/duplas/
-" crase -- cobre os dois tipos de par aqui. Brackets sao ASSIMETRICOS
-" (abertura != fechamento, empilha de verdade); aspas sao SIMETRICAS
-" (mesmo caractere abre e fecha -- alternar: se o topo da pilha ja e essa
-" mesma aspa, fecha; senao, abre uma nova). Achado real, reportado pelo
-" Alberto depois do fix so-parenteses: "tem que aparecer pra quaisquer
-" caracteres que forem ser removidos" -- nao so ( ) [ ] { }.
+" Covers STRUCTURAL overlap: when the suggestion closes, with its own text, a
+" bracket/brace/quote that was already open BEFORE the cursor, the real
+" closing character sitting in "after" (e.g. inserted by auto-pairs) is left
+" orphaned. Real finding (2026-07-20, "def sum(" with the cursor between the
+" parentheses): the suggestion "a, b):\n    return a + b" closes the very "("
+" of "def sum(" -- the real ")" was left over at the end of the accepted text
+" ("def sum(a, b):\n    return a + b)"). Returns how many characters from the
+" START of "after" must be discarded (not written
+" back) on accept.
+" g:AutoPairs (plugins/auto-pairs) closes (){}[] AND single/double/back
+" quotes -- both kinds of pair are covered here. Brackets are ASYMMETRIC
+" (opener != closer, they really nest); quotes are SYMMETRIC (the same
+" character opens and closes -- alternate: if the top of the stack already is
+" that same quote it closes, otherwise it opens a new one). Real finding,
+" reported after the parentheses-only fix: "it has to show up for any
+" character that is going to be removed" -- not just ( ) [ ] { }.
 function! s:AdvanceBracketStack(stack, text) abort
   let pairs = {'(': ')', '[': ']', '{': '}'}
   let closers = ')]}'
@@ -237,10 +237,10 @@ function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_t
   let stack = s:AdvanceBracketStack(stack, a:suggestion_text)
   let redundant = max([0, depth_before - len(stack)])
   if redundant > 0
-    " so descarta se "depois" realmente comecar com essa quantidade de
-    " fechamentos -- senao pode nao ser o mesmo bracket/aspa (edicao
-    " incomum), melhor nao arriscar apagar algo que nao e obviamente
-    " redundante.
+    " only discards when "after" really does start with that many closing
+    " characters -- otherwise it might not be the same bracket/quote (an
+    " unusual edit), and it is better not to risk deleting something that is
+    " not obviously redundant.
     let n = 0
     while n < redundant && n < len(a:after_text) && stridx(closers, a:after_text[n]) >= 0
       let n += 1
@@ -250,22 +250,22 @@ function! vim_ai_autocomplete#CountRedundantAfterChars(before_text, suggestion_t
   return s:CountLeadingTrivialPairRedundancy(a:suggestion_text, a:after_text)
 endfunction
 
-" Cobre o caso em que o cursor esta ANTES do proprio abre-parenteses (nao
-" DENTRO do par ja aberto pelo auto-pairs) -- "antes" nao tem nenhum
-" bracket/aspa pendente (depth_before == 0), entao o calculo estrutural
-" acima nunca acha nada pra fechar, e o par vazio intacto em "depois" (ex:
-" "()" do auto-pairs, sem nada digitado dentro ainda) nao bate textualmente
-" com o FIM da sugestao (a sugestao termina em fechamento ")", "depois"
-" comeca com abertura "(" -- caracteres diferentes, ComputeTextOverlapLength
-" tambem nao acha nada). A sugestao, sem saber que esse par vazio existe,
-" escreve sua PROPRIA versao completa do par (ex: "(arr):" pra
-" "def quicksort") -- o par vazio original fica orfao no final
-" ("def quicksort(arr):()"). Achado real, reportado pelo Alberto 2026-07-21
-" e root-caused via log de debug temporario (removido apos o fix).
-" So descarta se a sugestao de fato USA esse mesmo tipo de bracket/aspa em
-" algum lugar -- mesmo espirito conservador do bloco acima, evita apagar um
-" par vazio que por coincidencia esta logo apos o cursor mas nao tem
-" nenhuma relacao com o que a sugestao escreveu.
+" Covers the case where the cursor sits BEFORE the opening bracket itself
+" (not INSIDE the pair auto-pairs already opened) -- "before" has no pending
+" bracket/quote (depth_before == 0), so the structural computation above
+" never finds anything to close, and the untouched empty pair in "after"
+" (e.g. the "()" from auto-pairs, with nothing typed inside yet) does not
+" match the END of the suggestion textually (the suggestion ends in a ")"
+" closer, "after" starts with a "(" opener -- different characters, so
+" ComputeTextOverlapLength finds nothing either). The suggestion, unaware
+" that this empty pair exists, writes its OWN complete version of the pair
+" ("(arr):" for "def quicksort") -- the original empty pair is left orphaned
+" ("def quicksort(arr):()"). Real finding, reported on 2026-07-21 and
+" root-caused through a temporary debug log (removed after the fix).
+" It only discards when the suggestion does USE that same kind of
+" bracket/quote somewhere -- the same conservative spirit as the block
+" above, avoiding the deletion of an empty pair that merely happens to sit
+" right after the cursor with no relation to what the suggestion wrote.
 function! s:CountLeadingTrivialPairRedundancy(suggestion_text, after_text) abort
   let pairs = {'(': ')', '[': ']', '{': '}'}
   let quotes = '"''`'
@@ -286,13 +286,13 @@ function! s:CountLeadingTrivialPairRedundancy(suggestion_text, after_text) abort
   return stridx(a:suggestion_text, opener) >= 0 ? 2 : 0
 endfunction
 
-" `ant` (CLI oficial da Anthropic pro Developer Platform, OAuth) cobra do
-" MESMO credito de API pago por token que uma ANTHROPIC_API_KEY estatica --
-" nao da acesso ao credito incluso da assinatura Claude Pro/Max (esse e um
-" produto separado, Claude.ai/Claude Code, com seu proprio sistema de uso).
-" Removido daqui 2026-07-20 (Alberto: "visto que o ant e inutil aqui") --
-" so trocava a forma de autenticar, sem nenhuma vantagem de billing pro
-" caso de uso deste plugin. Sempre usa a key estatica agora.
+" `ant` (Anthropic's official CLI for the Developer Platform, OAuth) bills
+" the SAME per-token paid API credit a static ANTHROPIC_API_KEY does -- it
+" gives no access to the usage included in a Claude Pro/Max subscription
+" (that is a separate product, Claude.ai/Claude Code, with its own usage
+" system). Dropped from here on 2026-07-20 ("ant is useless here") -- it
+" only changed how you authenticate, with no billing advantage for this
+" plugin's use case. It always uses the static key now.
 function! vim_ai_autocomplete#BuildClaudeCommand(context, model, api_key) abort
   let body = vim_ai_autocomplete#BuildClaudeRequest(a:context, a:model)
   return ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
@@ -301,51 +301,51 @@ function! vim_ai_autocomplete#BuildClaudeCommand(context, model, api_key) abort
         \ '-H', 'Content-Type: application/json', '-d', body]
 endfunction
 
-" Espelha BuildClaudeCommand -- antes o Gemini montava o comando curl
-" inline dentro de RequestCompletion, sem funcao propria (inconsistente
-" com o Claude). Extraida pra ter uma interface uniforme entre familias
-" (build_command(context, model_id, api_key) -> cmd), usada por
-" FamilyHandler() abaixo.
+" Mirrors BuildClaudeCommand -- Gemini used to assemble its curl command
+" inline inside RequestCompletion, with no function of its own (inconsistent
+" with Claude). Extracted so the families share a uniform interface
+" (build_command(context, model_id, api_key) -> cmd), used by FamilyHandler()
+" below.
 function! vim_ai_autocomplete#BuildGeminiCommand(context, model_id, api_key) abort
   let body = vim_ai_autocomplete#BuildGeminiRequest(a:context)
   let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' . a:model_id . ':generateContent?key=' . a:api_key
   return ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
 endfunction
 
-" Cada familia de API implementa duas operacoes com assinatura uniforme:
-" build_command(context, model_id, api_key) -> lista pro job_start
-" parse_response(body) -> lista de linhas da sugestao
-" Adicionar uma familia de API nova (ex: OpenAI) exige implementar essas
-" duas funcoes e registrar aqui -- e o "escape hatch" pra APIs muito
-" diferentes de Gemini/Anthropic (ver spec, secao "Abordagens consideradas").
+" Every API family implements two operations with a uniform signature:
+" build_command(context, model_id, api_key) -> list for job_start
+" parse_response(body) -> list of suggestion lines
+" Adding a new API family (e.g. OpenAI) means implementing those two
+" functions and registering them here -- it is the "escape hatch" for APIs
+" very different from Gemini/Anthropic (see the spec, "Approaches considered").
 "
-" O dict e montado DENTRO da funcao (nao como `let` de topo de script) de
+" The dict is built INSIDE the function (not as a top-level `let`) because
 " proposito: `function('vim_ai_autocomplete#ParseGeminiResponse')` etc
-" precisam ser avaliados numa chamada, DEPOIS que o arquivo inteiro ja
-" carregou -- testado ao vivo (vim -N -es): um `let` de topo de script
-" executa durante o UNICO passe de sourcing do arquivo, entao se essa
-" linha vier ANTES da definicao textual de ParseGeminiResponse (que hoje
-" fica mais abaixo no arquivo), function() nao lanca erro nenhum mas
-" devolve um valor NAO-callable (silencioso -- confirmado com
-" `E1085: Not a callable type` so na hora de chamar). Montando o dict
-" dentro do corpo da funcao, so roda quando FamilyHandler() e chamada de
-" verdade -- nesse momento o autoload ja carregou o arquivo inteiro (e' a
-" propria chamada que dispara o carregamento, se ainda nao tiver
-" carregado), entao todas as funcoes ja existem de verdade.
+" have to be evaluated during a call, AFTER the whole file has already been
+" loaded -- tested live (vim -N -es): a top-level script `let`
+" runs during the SINGLE sourcing pass of the file, so if that line comes
+" BEFORE the textual definition of ParseGeminiResponse (which today sits
+" further down the file), function() throws no error at all but returns a
+" NON-callable value (silently -- confirmed with `E1085: Not a callable
+" type` only at call time). Building the dict inside the function body means
+" it only runs when FamilyHandler() is actually called -- and by then
+" autoload has loaded the whole file (the call itself triggers the load, if
+" it has not happened yet), so every function really does exist.
+" loaded), so every function really does exist by then.
 function! vim_ai_autocomplete#FamilyHandler(family) abort
   let handlers = {
         \ 'gemini': {'build_command': function('vim_ai_autocomplete#BuildGeminiCommand'), 'parse_response': function('vim_ai_autocomplete#ParseGeminiResponse')},
         \ 'anthropic': {'build_command': function('vim_ai_autocomplete#BuildClaudeCommand'), 'parse_response': function('vim_ai_autocomplete#ParseClaudeResponse')},
         \ }
   if !has_key(handlers, a:family)
-    throw 'vim-ai-autocomplete: familia desconhecida "' . a:family . '"'
+    throw 'vim-ai-autocomplete: unknown family "' . a:family . '"'
   endif
   return handlers[a:family]
 endfunction
 
-" Extrai a mensagem de erro de uma resposta JSON de erro da API (formato
-" comum entre Gemini e Claude: {"error": {"message": ...}}). Retorna '' se
-" nao for JSON, ou nao tiver esse formato.
+" Extracts the error message from a JSON error response from the API (a
+" shape common to Gemini and Claude: {"error": {"message": ...}}). Returns '' when the
+" body is not JSON, or does not have that shape.
 function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   try
     let data = json_decode(a:raw_output)
@@ -357,10 +357,10 @@ function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   return ''
 endfunction
 
-" Candidate bloqueado (filtro de seguranca, finishReason SAFETY/RECITATION)
-" vem SEM "content" ou sem "parts" -- resposta HTTP 200 legitima, so sem
-" sugestao de verdade. Achado real, reportado pelo Alberto 2026-07-22 (smoke
-" test ao vivo do port Neovim): acesso direto sem guarda lancava excecao.
+" A blocked candidate (safety filter, finishReason SAFETY/RECITATION)
+" comes back WITHOUT "content", or without "parts" -- a legitimate HTTP 200
+" response, just with no actual suggestion. Real finding, reported from a
+" smoke test of the Neovim port): the unguarded direct access threw.
 function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   try
     let data = json_decode(a:body)
@@ -395,16 +395,16 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   return split(text, "\n", 1)
 endfunction
 
-" Alguns modelos (confirmado com gemini-3.1-flash-lite, reproduzivel 3/3
-" chamadas reais) tratam a resposta como continuacao literal de bytes: se o
-" contexto termina em ":" (abertura de bloco Python), a primeira linha da
-" sugestao vem sem quebra de linha E sem indentacao propria -- o texto gruda
-" direto na linha atual (ex: "def fibonacci(n):if n <= 1:"). Pedir pro
-" modelo incluir a quebra de linha via instrucao no prompt NAO resolveu
-" (testado, mesmo comportamento). Fix: quando o contexto termina em ":" e a
-" filetype e python, insere uma quebra de linha e um nivel de indentacao
-" (shiftwidth) na primeira linha da sugestao -- as linhas seguintes ja vem
-" com indentacao relativa correta do proprio modelo, so a primeira precisa
+" Some models (confirmed with gemini-3.1-flash-lite, reproducible 3/3
+" real calls) treat the response as a literal continuation of bytes: when the
+" context ends in ":" (a Python block opener), the first line of the
+" suggestion comes with no line break AND no indentation of its own -- the
+" text sticks straight onto the current line (e.g. "def fibonacci(n):if n
+" <= 1:"). Asking the model to include the line break through a prompt
+" instruction did NOT fix it (tested, same behaviour). Fix: when the context
+" ends in ":" and the filetype is python, insert a line break and one level
+" of indentation (shiftwidth) on the first line of the suggestion -- the
+" following lines already come with the right relative indentation from the
 " desse ajuste.
 function! vim_ai_autocomplete#AdjustSuggestionLines(lines, current_line_before_cursor, filetype, shiftwidth, expandtab) abort
   if empty(a:lines) || a:filetype !=# 'python'
@@ -415,7 +415,7 @@ function! vim_ai_autocomplete#AdjustSuggestionLines(lines, current_line_before_c
     return a:lines
   endif
   if a:lines[0] ==# ''
-    " ja veio com quebra de linha propria -- nao mexe
+    " it already came with a line break of its own -- leave it alone
     return a:lines
   endif
   let indent_str = a:expandtab ? repeat(' ', a:shiftwidth) : "\t"
@@ -436,30 +436,30 @@ function! s:EnsurePropType() abort
   endif
 endfunction
 
-" Highlight PROPRIO pro caractere real redundante -- riscado (strikethrough),
-" nao o mesmo estilo do ghost text. Reusar o highlight do ghost text (que
-" significa "isso vai ser inserido") pro caractere que na verdade vai ser
-" REMOVIDO era enganoso: aparecia como ghost text mas sumia ao aceitar com
-" Tab, em vez de "solidificar" como o resto da sugestao (achado real,
+" A highlight of its OWN for the real redundant character -- strikethrough,
+" not the ghost text style. Reusing the ghost text highlight (which means
+" "this is going to be inserted") for a character that is in fact going to
+" be REMOVED was misleading: it looked like ghost text but vanished on Tab
+" instead of "solidifying" like the rest of the suggestion (real finding,
 " reportado pelo Alberto: "o parenteses errado aparece como ghost text mas
-" quando aperto tab ele nao aparece").
+" when I press tab it does not show up").
 function! s:EnsureRedundantPropType() abort
   if empty(prop_type_get(s:redundant_prop_type))
     if !hlexists('VimAiAutocompleteRedundant')
-      " strikethrough sozinho nao e confiavel (depende de t_Cs/t_Ce do
-      " terminal -- confirmado nao aparecer via captura de cores real
-      " dentro do tmux). Vermelho (gruvbox) como sinal PRINCIPAL, sempre
-      " visivel, com strikethrough de bonus quando o terminal suportar.
+      " strikethrough alone is not reliable (it depends on the terminal's
+      " t_Cs/t_Ce -- confirmed not to render, through a real colour capture
+      " inside tmux). Red (gruvbox) is the PRIMARY signal, always visible,
+      " with strikethrough as a bonus when the terminal supports it.
       highlight default VimAiAutocompleteRedundant cterm=strikethrough gui=strikethrough ctermfg=167 guifg=#fb4934
     endif
     call prop_type_add(s:redundant_prop_type, {'highlight': 'VimAiAutocompleteRedundant'})
   endif
 endfunction
 
-" redundant_after (opcional, default 0): quantos caracteres do INICIO do
+" redundant_after (optional, defaults to 0): how many characters from the
 " texto real DEPOIS do cursor devem ser DESCARTADOS (nao preservados) ao
-" aceitar -- ver CountRedundantAfterChars(). Usado quando a sugestao ja
-" fecha, com seu proprio texto, um parenteses/colchete/chave que estava
+" accept -- see CountRedundantAfterChars(). Used when the suggestion already
+" closes, with its own text, a bracket/brace that was open
 " aberto antes do cursor, deixando o fechamento real (ex: do auto-pairs)
 " orfao/duplicado.
 function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
@@ -511,12 +511,12 @@ let s:tab_fallback_is_expr = 1
 function! vim_ai_autocomplete#SetupTabWrap() abort
   let original_map = maparg('<Tab>', 'i', 0, 1)
   if !empty(original_map)
-    " Mapeamentos <Tab> baseados em callback Lua (ex: blink.cmp no Neovim,
-    " "pula pro proximo placeholder do snippet ou cai pro Tab normal") nao
-    " tem chave 'rhs' no dict devolvido por maparg() -- acessar .rhs direto
-    " dispara E716 em TODA inicializacao do Neovim (achado real, reportado
-    " pelo Alberto: erro/prompt "Press ENTER" logo ao abrir). get() com
-    " default cobre os dois formatos (rhs string classico e callback).
+    " <Tab> mappings backed by a Lua callback (e.g. blink.cmp on Neovim,
+    " "jump to the next snippet placeholder or fall back to a normal Tab")
+    " have no 'rhs' key in the dict maparg() returns -- reading .rhs directly
+    " throws E716 on EVERY Neovim startup (real finding: an error and a
+    " "Press ENTER" prompt right after opening). Reading it with a default
+    " covers both shapes (classic string rhs and callback).
     let s:tab_fallback_rhs = get(original_map, 'rhs', '')
     let s:tab_fallback_is_expr = get(original_map, 'expr', 0)
     let s:tab_fallback_callback = get(original_map, 'callback', v:null)
@@ -529,23 +529,23 @@ function! vim_ai_autocomplete#TabHandler() abort
     return vim_ai_autocomplete#Accept()
   endif
   if !empty(get(s:, 'tab_fallback_callback', v:null))
-    " mapeamento original e <expr>: o retorno do callback E' o resultado do
-    " expr (mesmo mecanismo que o Neovim usa internamente pra mapeamentos
-    " <expr> com callback Lua, ex: blink.cmp).
+    " the original mapping is <expr>: the callback return value IS the result
+    " of the expr (the same mechanism Neovim uses internally for <expr>
+    " mappings with a Lua callback, e.g. blink.cmp).
     let result = s:tab_fallback_callback()
     return s:tab_fallback_is_expr ? result : ''
   endif
   return s:tab_fallback_is_expr ? eval(s:tab_fallback_rhs) : s:tab_fallback_rhs
 endfunction
 
-" Descarta a sugestao SEM sair do insert mode. Antes isso vivia num wrap do
-" <Esc>, que engolia a tecla sempre que havia sugestao visivel: o usuario
-" apertava <Esc> pra sair do insert, continuava no insert, e as teclas
-" seguintes entravam como texto no buffer. Uma tecla nao pode ter dois
-" significados sem o usuario conseguir prever qual vale, entao <Esc> voltou a
-" ser so <Esc> -- a sugestao e' limpa pelo autocmd InsertLeavePre -- e o
-" descarte-sem-sair ganhou tecla propria. <C-]> e' a mesma escolha do
-" copilot.vim pra dispensar sugestao.
+" Dismisses the suggestion WITHOUT leaving insert mode. This used to live in
+" an <Esc> wrap that swallowed the key whenever a suggestion was visible: the
+" user pressed <Esc> to leave insert mode, stayed in insert mode, and the
+" following keystrokes landed in the buffer as text. One key cannot carry two
+" meanings when the user has no way to predict which one applies, so <Esc> is
+" plain <Esc> again -- the suggestion is cleared by the InsertLeavePre
+" autocmd -- and dismiss-without-leaving got a key of its own. <C-]> is the
+" same choice copilot.vim makes for dismissing a suggestion.
 function! vim_ai_autocomplete#Dismiss() abort
   call vim_ai_autocomplete#ClearSuggestion()
   return ''
@@ -558,18 +558,18 @@ function! vim_ai_autocomplete#Accept() abort
   if empty(lines)
     return ''
   endif
-  " Insere direto no buffer via setline()/append() em vez de "digitar" via
+  " Writes straight into the buffer through setline()/append() instead of
   " <CR> simulado -- digitar <CR> dispara o autoindent/indentexpr real do
-  " Vim a cada linha, que soma em cima da indentacao que o texto da API ja
+  " Vim on every line, stacking on top of the indentation the API text
   " trouxe, dobrando/desalinhando a indentacao real (achado via debug real
-  " com o Gemini: linha esperada com 8 espacos virava 12, outra virava 24).
+  " with Gemini: a line expected to have 8 spaces became 12, another became 24).
   "
-  " A mutacao do buffer precisa ser ADIADA via timer_start(0, ...): um
-  " mapeamento <expr> (como o <Tab> que chama esta funcao) NAO pode mudar o
-  " texto do buffer durante sua propria avaliacao -- fazer isso direto aqui
+  " The buffer mutation has to be DEFERRED through timer_start(0, ...): an
+  " <expr> mapping (like the <Tab> that calls this function) may NOT change
+  " the buffer text during its own evaluation -- doing it directly here
   " dispara E565 (confirmado rodando de verdade contra o mapeamento real de
-  " <Tab>, nao só via :call). timer_start com delay 0 roda o callback assim
-  " que o Vim volta pro loop de eventos, ja fora da avaliacao do <expr>.
+  " <Tab>, not only through :call). timer_start with a 0 delay runs the
+  " callback as soon as Vim is back in its event loop, outside the <expr>
   let lnum = line('.')
   let col = col('.')
   call timer_start(0, {-> vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, redundant_after)})
@@ -594,17 +594,17 @@ function! vim_ai_autocomplete#InsertAcceptedLines(lines, lnum, col, ...) abort
   endif
 endfunction
 
-" active_models: lista JA FILTRADA (ver vim_ai_autocomplete#ActiveModels()) --
-" so registra ,pr e o comando :VimAiAutocompleteModel com 2+ modelos ativos
-" (mesma regra de hoje -- antes "as duas keys presentes", generalizada).
+" active_models: the ALREADY FILTERED list (see vim_ai_autocomplete#ActiveModels())
+" -- registers ,pr and the :VimAiAutocompleteModel command only with 2+ active
+" models (same rule as today -- previously "both keys present", generalised).
 function! vim_ai_autocomplete#SetupProviderToggle(active_models) abort
   if len(a:active_models) >= 2
-    " <leader>pr, nao <leader>ap nem <leader>pv: <leader>a ja e code actions
-    " do CoC (configs.vim) -- <leader>ap compartilhava prefixo com um
-    " mapeamento completo existente (achado real, reportado pelo Alberto).
-    " <leader>pv tambem foi descartado: colide com o seletor de venv Python
-    " do lado Neovim (nvim/lua/user/venv.lua) -- mesma tecla escolhida nos
-    " dois lados por consistencia, entao precisa ser livre nos dois.
+    " <leader>pr, not <leader>ap nor <leader>pv: <leader>a is already CoC code
+    " actions (configs.vim) -- <leader>ap shared a prefix with an existing
+    " complete mapping (real finding). <leader>pv was dropped too: it collides
+    " with the Python venv selector on the Neovim side
+    " (nvim/lua/user/venv.lua) -- the same key is chosen on both sides for
+    " consistency, so it has to be free on both.
     nnoremap <silent> <leader>pr :call vim_ai_autocomplete#ToggleProvider()<CR>
     command! -nargs=1 -complete=customlist,vim_ai_autocomplete#CompleteModelNames VimAiAutocompleteModel call vim_ai_autocomplete#SelectModel(<q-args>)
   endif
@@ -616,7 +616,7 @@ function! vim_ai_autocomplete#ToggleProvider() abort
   let idx = index(names, g:vim_ai_autocomplete_provider)
   let next_idx = (idx + 1) % len(names)
   let g:vim_ai_autocomplete_provider = names[next_idx]
-  echom 'vim-ai-autocomplete: provider agora e ' . g:vim_ai_autocomplete_provider
+  echom 'vim-ai-autocomplete: provider is now ' . g:vim_ai_autocomplete_provider
   call s:CheckModelKey(g:vim_ai_autocomplete_provider)
 endfunction
 
@@ -624,11 +624,11 @@ function! vim_ai_autocomplete#SelectModel(name) abort
   let active = vim_ai_autocomplete#ActiveModels()
   let model = vim_ai_autocomplete#FindModelByName(active, a:name)
   if model is v:null
-    echoerr 'vim-ai-autocomplete: modelo "' . a:name . '" nao existe ou nao esta ativo (sem API key)'
+    echoerr 'vim-ai-autocomplete: model "' . a:name . '" does not exist or is not active (no API key)'
     return
   endif
   let g:vim_ai_autocomplete_provider = a:name
-  echom 'vim-ai-autocomplete: provider agora e ' . a:name
+  echom 'vim-ai-autocomplete: provider is now ' . a:name
   call s:CheckModelKey(a:name)
 endfunction
 
@@ -638,13 +638,13 @@ function! vim_ai_autocomplete#CompleteModelNames(arglead, cmdline, cursorpos) ab
   return filter(names, 'stridx(v:val, a:arglead) == 0')
 endfunction
 
-" Generaliza s:CheckClaudeKey/s:OnClaudeKeyCheckExit (antes so existia pro
-" Claude, fixo). Dispara uma chamada leve (contexto minimo "hi") pro
-" modelo pra qual acabou de trocar; se der erro, so AVISA -- nao reverte
-" mais pro modelo anterior (antes revertia automaticamente; mudanca pedida
-" pelo Alberto 2026-07-22: "quero que a pessoa possa ciclar a vontade", ex:
-" ,pr repetido pra tentar os modelos seguintes mesmo depois de um aviso de
-" credito, sem ficar precisando trocar de volta manualmente).
+" Generalises s:CheckClaudeKey/s:OnClaudeKeyCheckExit (which used to exist
+" only for Claude, hardcoded). Fires a cheap call (minimal "hi" context) at
+" the model just switched to; on error it only WARNS, it no longer reverts
+" to the previous model (it used to revert automatically; changed on request
+" 2026-07-22, "I want to be able to cycle freely", e.g. pressing ,pr
+" repeatedly to try the next models even after a credit warning, without
+" having to switch back by hand).
 function! s:CheckModelKey(name) abort
   let model = vim_ai_autocomplete#FindModelByName(vim_ai_autocomplete#ActiveModels(), a:name)
   if model is v:null
@@ -676,16 +676,16 @@ let s:timer_id = -1
 let s:gen = 0
 
 function! vim_ai_autocomplete#Trigger() abort
-  " se o cursor se moveu pra longe de onde a sugestao foi mostrada (ex:
-  " setas pra revisar o texto antes de aceitar), ela fica invalida --
-  " aceitar ela do jeito que esta inseriria o texto errado na posicao
-  " errada. Achado real, reportado pelo Alberto: mover o cursor com as
-  " setas antes do Tab corrompia o buffer ("def mergesortarr):" -- o "("
-  " sumiu, sobrou um ")" extra no fim -- a sugestao STALE (calculada pra
-  " uma posicao) foi aceita numa posicao DIFERENTE (a nova, pos-movimento).
-  " Limpa incondicionalmente, mesmo com auto_trigger desligado -- isso e
-  " sobre correcao (nao deixar aceitar algo invalido), nao sobre pedir uma
-  " sugestao nova.
+  " if the cursor moved away from where the suggestion was shown (e.g. arrow
+  " keys to review the text before accepting), the suggestion is stale --
+  " accepting it as is would insert the wrong text at the wrong position.
+  " Real finding: moving the cursor with the arrows before Tab corrupted the
+  " buffer ("def mergesortarr):" -- the "(" vanished and an extra ")" was
+  " left at the end -- the STALE suggestion (computed for
+  " one position) was accepted at a DIFFERENT position (the new,
+  " post-movement one). Clears unconditionally, even with auto_trigger off --
+  " this is about correctness (not letting an invalid suggestion be
+  " accepted), not about asking for a new suggestion.
   if vim_ai_autocomplete#IsVisible() && (line('.') != s:suggestion_lnum || col('.') != s:suggestion_col)
     call vim_ai_autocomplete#ClearSuggestion()
   endif
@@ -700,7 +700,7 @@ endfunction
 
 function! vim_ai_autocomplete#ToggleAutoTrigger() abort
   let g:vim_ai_autocomplete_auto_trigger = !get(g:, 'vim_ai_autocomplete_auto_trigger', 1)
-  echom 'vim-ai-autocomplete: auto-trigger ' . (g:vim_ai_autocomplete_auto_trigger ? 'ligado' : 'desligado')
+  echom 'vim-ai-autocomplete: auto-trigger ' . (g:vim_ai_autocomplete_auto_trigger ? 'on' : 'off')
 endfunction
 
 function! vim_ai_autocomplete#OnTimer(timer_id) abort
@@ -722,8 +722,8 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let provider_name = get(g:, 'vim_ai_autocomplete_provider', default_name)
   let model = vim_ai_autocomplete#FindModelByName(active, provider_name)
   if model is v:null
-    " o provider configurado nao esta mais ativo (ex: key removida em
-    " runtime, ou nunca foi setado) -- cai pro default resolvido acima.
+    " the configured provider is no longer active (e.g. its key was removed at
+    " runtime, or was never set) -- fall back to the default resolved above.
     let model = vim_ai_autocomplete#FindModelByName(active, default_name)
   endif
   let handler = vim_ai_autocomplete#FamilyHandler(model.family)
@@ -758,10 +758,10 @@ function! vim_ai_autocomplete#RequestCompletion() abort
 endfunction
 
 " Antes, qualquer falha (exit != 0, ou resposta de erro da API) resultava em
-" nenhuma sugestao aparecer e NENHUM aviso -- achado real, reportado pelo
-" Alberto testando com credito de API zerado: parecia que o autocomplete
-" simplesmente nao fazia nada, sem pista do motivo. Retorna '' quando nao ha
-" nada de errado pra reportar (resposta vazia legitima, ex: cursor no fim
+" no suggestion appeared and NO warning was shown -- real finding, while
+" testing with an API credit balance of zero: it looked as if the completion
+" simply did nothing, with no hint why. Returns '' when there is nothing
+" wrong to report (a legitimately empty response, e.g. the cursor at the end
 " de um arquivo completo).
 function! vim_ai_autocomplete#DescribeCompletionFailure(provider, status, raw_output) abort
   let message = vim_ai_autocomplete#ExtractApiErrorMessage(a:raw_output)
@@ -769,7 +769,7 @@ function! vim_ai_autocomplete#DescribeCompletionFailure(provider, status, raw_ou
     return printf('vim-ai-autocomplete (%s): %s', a:provider, message)
   endif
   if a:status != 0
-    return printf('vim-ai-autocomplete (%s): request falhou (exit %d), sem detalhe na resposta', a:provider, a:status)
+    return printf('vim-ai-autocomplete (%s): request failed (exit %d), no detail in the response', a:provider, a:status)
   endif
   return ''
 endfunction
@@ -791,10 +791,10 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
   if a:gen != s:gen
     return
   endif
-  " descarta se o cursor ja se moveu desde que o request foi feito
-  " (resposta chegou tarde demais, contexto mudou) -- vale tambem pro aviso
+  " drop it if the cursor already moved since the request was made (the
+  " response arrived too late, the context changed) -- this applies to the
   " de erro, senao um erro de um request velho poderia aparecer fora de
-  " contexto depois que o usuario ja seguiu em frente.
+  " context after the user has already moved on.
   if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
     return
   endif
@@ -804,40 +804,39 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
     let s:last_completion_error = ''
     let current_line = getline(a:lnum)
     let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
-    " CountRedundantAfterChars PRECISA rodar com a sugestao ORIGINAL, antes
-    " de qualquer ajuste -- achado real, reportado pelo Alberto ("def
-    " fibonacci(" -- o ultimo parenteses nao aparecia vermelho): a
-    " sugestao real fecha uma chamada INTERNA (fibonacci(n - 2)) cujo ")"
-    " final coincide textualmente com o "depois" do cursor (so um ")").
-    " Cortar a sugestao ANTES corrompia esse fechamento legitimo e zerava
-    " o calculo de profundidade. Corrigido computando a redundancia
-    " estrutural PRIMEIRO (com o texto intacto).
+    " CountRedundantAfterChars MUST run against the ORIGINAL suggestion,
+    " before any adjustment -- real finding ("def fibonacci(", where the last
+    " parenthesis never turned red): the real suggestion closes an INNER call
+    " (fibonacci(n - 2)) whose final ")" coincides textually with the "after"
+    " of the cursor (a single ")"). Trimming the suggestion FIRST corrupted
+    " that legitimate closer and zeroed the depth computation. Fixed by
+    " running the structural computation FIRST, with the text intact.
     "
-    " As duas fontes de redundancia -- estrutural (brackets/aspas) e
-    " sobreposicao textual (ComputeTextOverlapLength) -- se SOMAM num so
-    " redundant_after, e a sugestao NUNCA e cortada: sempre mostra o texto
-    " completo da API, com o real "depois" marcado em vermelho e
-    " descartado ao aceitar. Antes, a sobreposicao textual cortava a
-    " sugestao silenciosamente (sem marcar nada de vermelho) -- achado
-    " real, reportado pelo Alberto: "o vermelho nao aparece nem com o
-    " cinza ja escrito" (o cinza tinha sido ajustado por esse mecanismo,
-    " mas o real nunca ficava marcado porque eram tratamentos diferentes).
+    " Both sources of redundancy -- structural (brackets/quotes) and textual
+    " overlap (ComputeTextOverlapLength) -- ADD UP into a single
+    " redundant_after, and the suggestion is NEVER trimmed here: it always
+    " shows the complete API text, with the real "after" marked in red and
+    " discarded on accept. Previously the textual overlap trimmed the
+    " suggestion silently (marking nothing red) -- real finding: "the red
+    " never shows up, even with the grey already written" (the grey had been
+    " adjusted by that mechanism, but the real character was never marked,
+    " because the two were handled differently).
     let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
     let remaining_after = strpart(a:after, redundant_after)
     let redundant_after += vim_ai_autocomplete#ComputeTextOverlapLength(lines, remaining_after)
-    " a:after pode atravessar VARIAS linhas reais do buffer (RequestCompletion
-    " manda ate 20 linhas abaixo do cursor pro prompt) -- mas o highlight
-    " (prop_add com 'length') e o Accept() (strpart na linha atual) so
-    " operam na linha do cursor. Limita redundant_after ao que sobra de
-    " verdade NESSA linha, pra nunca tentar marcar/apagar texto de linhas
-    " reais seguintes (caso raro: sugestao inteira duplicando varias
-    " linhas existentes) -- escopo conhecido, nao coberto.
+    " a:after may span SEVERAL real buffer lines (RequestCompletion
+    " sends up to 20 lines below the cursor to the prompt) -- but the
+    " highlight (prop_add with 'length') and Accept() (strpart on the current
+    " line) only operate on the cursor line. Caps redundant_after at what is
+    " really left ON THIS LINE, so it never tries to mark or delete text from
+    " following real lines (a rare case: a whole suggestion duplicating
+    " several existing lines) -- known scope, not covered.
     let current_line_remainder = strpart(current_line, a:col - 1)
     let redundant_after = min([redundant_after, len(current_line_remainder)])
     let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
-    " por ultimo, ja com as linhas na forma final que vai pra tela: tira da
-    " sugestao o fechamento que o buffer ja tem, pra nao renderizar ')' duas
-    " vezes e empurrar o ')' real pra longe do cursor.
+    " last, with the lines already in the final shape that reaches the screen:
+    " drop from the suggestion the closing characters the buffer already has,
+    " so ")" is not rendered twice, pushing the real one away from the cursor.
     let [lines, redundant_after] = vim_ai_autocomplete#SplitDisplayTail(lines, a:after, redundant_after)
     call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
   else

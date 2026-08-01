@@ -72,7 +72,7 @@ Execute (UN-000f ResolveActiveModels: nome duplicado -> so a primeira ocorrencia
   AssertEqual 1, len(active)
   AssertEqual 'primeiro', active[0].model_id
   AssertEqual 1, len(warnings)
-  Assert warnings[0] =~# 'dup', 'aviso deveria mencionar o nome duplicado'
+  Assert warnings[0] =~# 'dup', 'the warning should mention the duplicate name'
 After:
   unlet $UN_TEST_KEY_A
   unlet $UN_TEST_KEY_A2
@@ -212,7 +212,7 @@ Execute (UN-008 BuildClaudeRequest: produz JSON valido com o model certo, inclui
   let decoded = json_decode(req)
   AssertEqual 'claude-sonnet-4-5-20250929', decoded.model
   Assert decoded.messages[0].content =~# 'def foo(', 'request deveria conter o contexto de antes'
-  Assert decoded.messages[0].content =~# 'DEPOIS DO CURSOR', 'request deveria instruir o modelo sobre o texto depois do cursor'
+  Assert decoded.messages[0].content =~# 'AFTER THE CURSOR', 'the request should tell the model about the text after the cursor'
 
 Execute (UN-009 ParseGeminiResponse: extrai as linhas do formato real da API):
   let fake = json_encode({'candidates': [{'content': {'parts': [{'text': "linha1\nlinha2"}]}}]})
@@ -346,14 +346,14 @@ Execute (UN-021 FamilyHandler: familia "anthropic" devolve BuildClaudeCommand + 
   AssertEqual function('vim_ai_autocomplete#BuildClaudeCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseClaudeResponse'), handler.parse_response
 
-Execute (UN-022 FamilyHandler: familia desconhecida -> lanca excecao clara):
+Execute (UN-022 FamilyHandler: unknown family -> throws a clear exception):
   let threw = 0
   try
-    call vim_ai_autocomplete#FamilyHandler('openai-nao-existe')
-  catch /familia desconhecida/
+    call vim_ai_autocomplete#FamilyHandler('openai-does-not-exist')
+  catch /unknown family/
     let threw = 1
   endtry
-  AssertEqual 1, threw, 'deveria lancar excecao mencionando "familia desconhecida"'
+  AssertEqual 1, threw, 'should throw an exception mentioning "unknown family"'
 
 " UN-024 a UN-028: vim_ai_autocomplete#AdjustSuggestionLines() -- corrige o
 " caso (confirmado real, reproduzivel 3/3 com gemini-3.1-flash-lite) onde a

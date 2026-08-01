@@ -1,7 +1,7 @@
 local M = {}
 
--- Default preservando exatamente o comportamento de hoje do lado Vim
--- (Gemini + Claude, mesmos model_id) quando o usuario nao define
+-- Default that preserves exactly what the Vim side does today (Gemini plus
+-- Claude, same model_ids) when the user does not set
 -- vim.g.vim_ai_autocomplete_models.
 function M.default_models()
   return {
@@ -10,18 +10,18 @@ function M.default_models()
   }
 end
 
--- Filtra a lista crua pelos modelos cuja api_key_env esta de fato setada e
--- nao-vazia no ambiente -- essa e a lista "ativa" que entra no rodizio do
--- ,pr / :VimAiAutocompleteModel. Nomes duplicados: so a PRIMEIRA ocorrencia
--- entra (deterministico), as seguintes viram warnings (funcao pura -- quem
--- chama decide o que fazer com eles, ex: vim.notify).
+-- Filters the raw list down to the models whose api_key_env is actually set
+-- and non-empty in the environment -- that is the "active" list feeding the
+-- ,pr / :VimAiAutocompleteModel rotation. Duplicate names: only the FIRST
+-- occurrence gets in (deterministic), the rest become warnings (pure
+-- function -- the caller decides what to do with them, e.g. vim.notify).
 function M.resolve_active_models(models_list)
   local active = {}
   local warnings = {}
   local seen_names = {}
   for _, model in ipairs(models_list) do
     if seen_names[model.name] then
-      table.insert(warnings, 'modelo duplicado "' .. model.name .. '" em vim.g.vim_ai_autocomplete_models -- ignorando')
+      table.insert(warnings, 'duplicate model "' .. model.name .. '" in vim.g.vim_ai_autocomplete_models -- ignoring')
     else
       seen_names[model.name] = true
       local key_value = vim.fn.getenv(model.api_key_env)
@@ -42,9 +42,9 @@ function M.find_model_by_name(models_list, name)
   return nil
 end
 
--- Ponto de entrada publico: le vim.g.vim_ai_autocomplete_models (ou o
--- default se o usuario nao configurou nada), resolve a lista ativa, e
--- reporta via vim.notify (WARN) qualquer aviso de config invalida.
+-- Public entry point: reads vim.g.vim_ai_autocomplete_models (or the default
+-- when the user configured nothing), resolves the active list, and reports
+-- any invalid-config warning through vim.notify (WARN).
 function M.active_models()
   local models_list = vim.g.vim_ai_autocomplete_models or M.default_models()
   local active, warnings = M.resolve_active_models(models_list)
@@ -54,20 +54,21 @@ function M.active_models()
   return active
 end
 
--- Decide o modelo default e se precisa avisar/travar, a partir da lista de
--- modelos ATIVOS (ja filtrada por resolve_active_models). all_models e
--- usada so pra listar as api_key_env configuradas na mensagem de erro.
+-- Decides the default model and whether to warn or hard-stop, starting from
+-- the ACTIVE model list (already filtered by resolve_active_models).
+-- all_models is only used to list the configured api_key_env names in the
+-- error message.
 function M.resolve_default_model(all_models, active_models)
   if #active_models == 0 then
     local env_names = {}
     for _, model in ipairs(all_models) do
       table.insert(env_names, model.api_key_env)
     end
-    return nil, 'error', 'nenhuma API key encontrada (' .. table.concat(env_names, ' nem ') .. ') -- configure pelo menos uma'
+    return nil, 'error', 'no API key found (' .. table.concat(env_names, ' nor ') .. ') -- configure at least one'
   end
   if #active_models == 1 then
     local name = active_models[1].name
-    return name, 'warn', string.format('so %s disponivel -- toggle ,pr desabilitado', name)
+    return name, 'warn', string.format('only %s available -- the ,pr toggle is disabled', name)
   end
   return active_models[1].name, nil, nil
 end

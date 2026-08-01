@@ -10,24 +10,25 @@ local state = {
   redundant_after = 0,
 }
 
--- Highlight PROPRIO pro caractere real redundante -- vermelho + riscado,
--- nao o mesmo estilo do ghost text (mesmo achado do lado Vim: reusar o
--- highlight do ghost text pro que vai ser REMOVIDO era enganoso).
+-- A highlight of its OWN for the real redundant character -- red plus
+-- strikethrough, not the ghost text style (same finding as on the Vim side:
+-- reusing the ghost text highlight for what is about to be REMOVED was
+-- misleading).
 local function ensure_redundant_highlight()
   if vim.fn.hlexists(HL_GROUP) == 0 then
     vim.api.nvim_set_hl(0, HL_GROUP, { strikethrough = true, ctermfg = 167, fg = '#fb4934', default = true })
   end
 end
 
--- redundant_after (opcional, default 0): quantos caracteres do INICIO do
--- texto real DEPOIS do cursor devem ser DESCARTADOS ao aceitar.
+-- redundant_after (optional, defaults to 0): how many characters from the
+-- START of the real text AFTER the cursor must be DISCARDED on accept.
 function M.show_suggestion(lines, redundant_after)
   M.clear_suggestion()
   if #lines == 0 then
     return
   end
   redundant_after = redundant_after or 0
-  local lnum0 = vim.fn.line('.') - 1 -- extmarks sao 0-indexed
+  local lnum0 = vim.fn.line('.') - 1 -- extmarks are 0-indexed
   local col0 = vim.fn.col('.') - 1
 
   local virt_lines = {}
@@ -98,11 +99,12 @@ function M.insert_accepted_lines(lines, lnum, col, redundant_after)
   end
 end
 
--- Insere direto no buffer via setline()/append() em vez de "digitar" via
--- <CR> simulado (mesmo motivo do lado Vim: autoindent duplicaria a
--- indentacao que a API ja trouxe). Sempre adiada via vim.schedule() --
--- mais simples e mais seguro que testar se a mutacao direta funcionaria
--- dentro do mapeamento <expr> em toda versao do Neovim.
+-- Writes straight into the buffer through setline()/append() instead of
+-- "typing" it via a simulated <CR> (same reason as on the Vim side:
+-- autoindent would duplicate the indentation the API already sent). Always
+-- deferred through vim.schedule() -- simpler and safer than checking whether
+-- direct mutation would work inside the <expr> mapping on every Neovim
+-- version.
 function M.accept()
   local lines = M.current_suggestion()
   local redundant_after = state.redundant_after

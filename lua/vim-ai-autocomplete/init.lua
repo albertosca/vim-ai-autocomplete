@@ -16,12 +16,12 @@ local function on_timer()
   request.request_completion()
 end
 
--- Se o cursor se moveu pra longe de onde a sugestao foi mostrada (ex: setas
--- pra revisar o texto antes de aceitar), ela fica invalida -- aceitar do
--- jeito que esta inseriria o texto errado na posicao errada. Mesmo fix do
--- lado Vim (commit 84a2975). Limpa incondicionalmente, mesmo com
--- auto_trigger desligado -- isso e sobre correcao, nao sobre pedir uma
--- sugestao nova.
+-- If the cursor moved away from where the suggestion was shown (e.g. arrow
+-- keys to review the text before accepting), the suggestion is stale --
+-- accepting it as is would insert the wrong text at the wrong position. Same
+-- fix as on the Vim side (commit 84a2975). Clears unconditionally, even with
+-- auto_trigger off -- this is about correctness, not about asking for a new
+-- suggestion.
 function M.trigger()
   if ghost_text.is_visible() then
     local sug_lnum, sug_col = ghost_text.suggestion_position()
@@ -40,11 +40,11 @@ function M.trigger()
   timer = vim.defer_fn(on_timer, 600)
 end
 
--- opts (opcional): {models = lista_de_modelos, auto_trigger = boolean}.
--- Acucar sobre os mesmos vim.g.* -- nunca um caminho de config paralelo.
--- Quem configura via vim.g direto continua funcionando identico; opts e'
--- so uma forma mais idiomatica (estilo lazy.nvim opts={}) de escrever a
--- mesma coisa. setup() sem argumento continua igual a antes.
+-- opts (optional): {models = model_list, auto_trigger = boolean}. Sugar over
+-- the very same vim.g.* variables -- never a parallel config path. Anyone
+-- setting vim.g directly keeps working identically; opts is just a more
+-- idiomatic way (lazy.nvim opts={} style) of writing the same thing.
+-- setup() with no argument behaves exactly as before.
 function M.setup(opts)
   opts = opts or {}
   if opts.models ~= nil then
@@ -61,8 +61,8 @@ function M.setup(opts)
   keymaps.setup_tab_wrap()
   vim.keymap.set('i', '<C-]>', keymaps.dismiss, { expr = true, silent = true, desc = 'vim-ai-autocomplete: dismiss suggestion' })
 
-  -- ,pt nao depende de API key (so liga/desliga o debounce automatico) --
-  -- registrado sempre, diferente de ,pr (so com 2+ modelos ativos).
+  -- ,pt does not depend on an API key (it only toggles the automatic
+  -- debounce) -- always registered, unlike ,pr (2+ active models only).
   vim.keymap.set('n', '<leader>pt', keymaps.toggle_auto_trigger, { silent = true, desc = 'vim-ai-autocomplete: toggle auto-trigger' })
 
   local active_models = models.active_models()

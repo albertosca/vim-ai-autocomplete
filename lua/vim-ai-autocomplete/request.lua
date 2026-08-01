@@ -18,15 +18,16 @@ local function warn_completion_failure(provider, status, raw_output)
   vim.notify(message, vim.log.levels.WARN)
 end
 
--- CountRedundantAfterChars PRECISA rodar com a sugestao ORIGINAL, antes de
--- qualquer ajuste (mesmo achado do lado Vim: cortar a sugestao antes
--- corrompe o calculo estrutural). As duas fontes de redundancia --
--- estrutural e sobreposicao textual -- se SOMAM num so redundant_after.
+-- count_redundant_after_chars MUST run against the ORIGINAL suggestion,
+-- before any adjustment (same finding as on the Vim side: trimming the
+-- suggestion first corrupts the structural computation). Both sources of
+-- redundancy -- structural and textual overlap -- ADD UP into a single
+-- redundant_after.
 local function on_exit(request_gen, out_chunks, status, provider, parse_response, bufnr, lnum, col, after)
   if request_gen ~= gen then
     return
   end
-  -- descarta se o cursor ja se moveu desde que o request foi feito.
+  -- drop it if the cursor already moved since the request was made.
   if vim.api.nvim_get_current_buf() ~= bufnr or vim.fn.line('.') ~= lnum or vim.fn.col('.') ~= col then
     return
   end
@@ -39,14 +40,16 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
     local redundant_after = redundancy.count_redundant_after_chars(before_cursor, table.concat(lines, '\n'), after)
     local remaining_after = after:sub(redundant_after + 1)
     redundant_after = redundant_after + redundancy.compute_text_overlap_length(lines, remaining_after)
-    -- limita ao que sobra de verdade NESSA linha -- mesmo escopo conhecido
-    -- do lado Vim (nao cobre sugestao inteira duplicando varias linhas).
+    -- cap it at what is really left ON THIS LINE -- same known scope as the
+    -- Vim side (it does not cover a whole suggestion duplicating several
+    -- existing lines).
     local current_line_remainder = current_line:sub(col)
     redundant_after = math.min(redundant_after, #current_line_remainder)
     lines = redundancy.adjust_suggestion_lines(lines, before_cursor, vim.bo.filetype, vim.fn.shiftwidth(), vim.bo.expandtab)
-    -- por ultimo, ja com as linhas na forma final que vai pra tela: tira da
-    -- sugestao o fechamento que o buffer ja tem, pra nao renderizar ')' duas
-    -- vezes e empurrar o ')' real pra longe do cursor.
+    -- last, with the lines already in the final shape that reaches the
+    -- screen: drop from the suggestion the closing characters the buffer
+    -- already has, so ')' is not rendered twice and the real ')' is not
+    -- pushed away from the cursor.
     lines, redundant_after = redundancy.split_display_tail(lines, after, redundant_after)
     ghost_text.show_suggestion(lines, redundant_after)
   else
@@ -64,8 +67,8 @@ function M.request_completion()
   local provider_name = vim.g.vim_ai_autocomplete_provider or default_name
   local model = models.find_model_by_name(active, provider_name)
   if not model then
-    -- o provider configurado nao esta mais ativo (ex: key removida em
-    -- runtime) -- cai pro default resolvido acima.
+    -- the configured provider is no longer active (e.g. its key was removed
+    -- at runtime) -- fall back to the default resolved above.
     model = models.find_model_by_name(active, default_name)
   end
   local handler = family.family_handler(model.family)
@@ -82,10 +85,11 @@ function M.request_completion()
   local lines_before, lines_after = context_mod.split_lines_at_cursor(
     lines_before_full, vim.fn.getline('.'), cur_col, lines_after_full)
   local context = context_mod.build_context(lines_before, lines_after, 16000)
-  -- captura o after CRU (buffer) ANTES de qualquer augmentacao de LSP --
-  -- redundancy.count_redundant_after_chars/compute_text_overlap_length em
-  -- on_exit precisam do texto real apos o cursor, nao do prompt context
-  -- (secao "DEFINICOES RELACIONADAS") que so faz sentido no request pra API.
+  -- capture the RAW after (from the buffer) BEFORE any LSP augmentation --
+  -- redundancy.count_redundant_after_chars/compute_text_overlap_length in
+  -- on_exit need the real text after the cursor, not the prompt context (the
+  -- "RELATED DEFINITIONS" section), which only makes sense in the API
+  -- request.
   local after = context.after
 
   local ok_node, scope_node = pcall(vim.treesitter.get_node, { bufnr = bufnr_now, pos = { cur_lnum - 1, math.max(0, cur_col - 1) } })
