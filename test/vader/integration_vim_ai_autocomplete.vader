@@ -1,38 +1,38 @@
-" IT-001 a IT-004: wrap do <Tab> preservando o mapeamento original.
-" IT-001 simula um mapeamento <expr> pre-existente DENTRO do proprio teste
-" (em vez de depender de um CoC real ja carregado, como no ~/.vim_runtime)
-" -- assim a suite fica 100% portavel, sem depender de nenhum plugin de
-" terceiro instalado no ambiente de quem clona so este repo.
+" IT-001 to IT-004: the <Tab> wrap preserving the original mapping.
+" IT-001 simulates a pre-existing <expr> mapping INSIDE the test itself
+" (instead of relying on a real CoC already loaded, as in ~/.vim_runtime)
+" -- that keeps the suite 100% portable, with no third-party plugin required
+" in the environment of whoever clones just this repo.
 
-Execute (IT-001 SetupTabWrap preserva o comportamento antigo quando nao ha sugestao):
+Execute (IT-001 SetupTabWrap preserves the old behaviour when there is no suggestion):
   inoremap <expr> <Tab> "'FAKE_ORIGINAL_TAB'"
   let original_map = maparg('<Tab>', 'i', 0, 1)
-  Assert !empty(original_map), 'esperava um mapeamento de <Tab> pre-existente (simulado)'
+  Assert !empty(original_map), 'expected a pre-existing (simulated) <Tab> mapping'
   call vim_ai_autocomplete#SetupTabWrap()
   new
   call setline(1, 'foo')
   call cursor(1, 4)
   let result = vim_ai_autocomplete#TabHandler()
   let original_result = original_map.expr ? eval(original_map.rhs) : original_map.rhs
-  AssertEqual original_result, result, 'sem sugestao visivel, TabHandler deveria se comportar identico ao mapeamento original'
+  AssertEqual original_result, result, 'with no visible suggestion, TabHandler should behave exactly like the original mapping'
 After:
   bdelete!
   iunmap <Tab>
 
-Execute (IT-002 TabHandler aceita a sugestao quando ela esta visivel, agendando insercao direto no buffer):
+Execute (IT-002 TabHandler accepts the suggestion when visible, scheduling a direct buffer write):
   call vim_ai_autocomplete#SetupTabWrap()
   new
   call setline(1, 'def foo(')
   normal! G$
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    pass'])
   call feedkeys("a\<Tab>\<Esc>", 'x')
-  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Accept deveria limpar a sugestao imediatamente'
+  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Accept should clear the suggestion immediately'
   sleep 10m
   AssertEqual ['def foo(a, b):', '    pass'], getline(1, 2)
 After:
   bdelete!
 
-Execute (IT-002b Accept preserva a indentacao exata da sugestao, sem o autoindent do Vim dobrando):
+Execute (IT-002b Accept preserves the suggestion's exact indentation, without Vim's autoindent doubling it):
   call vim_ai_autocomplete#SetupTabWrap()
   new
   setlocal filetype=python
@@ -47,11 +47,11 @@ Execute (IT-002b Accept preserva a indentacao exata da sugestao, sem o autoinden
         \ '        return n',
         \ '    else:',
         \ '        return fibonacci(n - 1) + fibonacci(n - 2)',
-        \ ], getline(1, 4), 'a indentacao de cada linha deveria bater exatamente com o texto da sugestao, sem o Vim somar indentacao em cima'
+        \ ], getline(1, 4), 'each line indentation should match the suggestion text exactly, without Vim stacking indentation on top'
 After:
   bdelete!
 
-Execute (IT-002c Accept preserva o texto depois do cursor, movendo-o pro fim da ultima linha inserida):
+Execute (IT-002c Accept preserves the text after the cursor, moving it to the end of the last inserted line):
   new
   call setline(1, 'foobar')
   call cursor(1, 4)
@@ -59,14 +59,14 @@ Execute (IT-002c Accept preserva o texto depois do cursor, movendo-o pro fim da 
   call vim_ai_autocomplete#TabHandler()
   sleep 10m
   AssertEqual ['fooXXX', 'YYYbar'], getline(1, 2)
-  AssertEqual [2, 4], [line('.'), col('.')], 'cursor deveria terminar logo depois do texto inserido na ultima linha (antes do "bar" preservado)'
+  AssertEqual [2, 4], [line('.'), col('.')], 'the cursor should end right after the text inserted on the last line (before the preserved "bar")'
 After:
   bdelete!
 
-Execute (IT-002e Accept descarta o fechamento redundante quando a sugestao ja fecha o proprio parenteses):
-  " Simula "def foo(" com cursor entre os parenteses que o auto-pairs ja
-  " inseriu (achado real, reportado pelo Alberto: "def soma(a, b):\n
-  " return a + b)" -- o ")" real sobrava no fim).
+Execute (IT-002e Accept discards the redundant closer when the suggestion already closes its own parenthesis):
+  " Simulates "def foo(" with the cursor between the parentheses auto-pairs
+  " already inserted (real finding: "def sum(a, b):\n    return a + b)" --
+  " the real ")" was left over at the end).
   call vim_ai_autocomplete#SetupTabWrap()
   new
   call setline(1, 'def foo()')
@@ -75,66 +75,66 @@ Execute (IT-002e Accept descarta o fechamento redundante quando a sugestao ja fe
   call feedkeys("a\<Tab>\<Esc>", 'x')
   sleep 10m
   AssertEqual ['def foo(a, b):', '    return a + b'], getline(1, 2),
-        \ 'o ")" real (redundant_after=1) deveria ser descartado, nao duplicado no fim'
+        \ 'the real ")" (redundant_after=1) should be discarded, not duplicated at the end'
 After:
   bdelete!
 
-Execute (IT-002f ShowSuggestion marca o "depois" redundante com highlight PROPRIO (riscado), nao o mesmo do ghost text):
+Execute (IT-002f ShowSuggestion marks the redundant "after" with a highlight of its OWN (strikethrough), not the ghost text one):
   new
   call setline(1, 'def foo()')
   call cursor(1, 8)
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    return a + b'], 1)
   let props = prop_list(1)
   let redundant_prop = filter(copy(props), "v:val.type ==# 'VimAiAutocompleteRedundant' && v:val.col == 8 && get(v:val, 'length', 0) == 1")
-  Assert !empty(redundant_prop), 'esperava o prop VimAiAutocompleteRedundant cobrindo o ")" real em col 8'
+  Assert !empty(redundant_prop), 'expected the VimAiAutocompleteRedundant prop covering the real ")" at col 8'
   let ghost_highlight_only = filter(copy(props), "v:val.type ==# 'VimAiAutocompleteSuggestion' && has_key(v:val, 'length')")
-  Assert empty(ghost_highlight_only), 'o tipo do ghost text (implica insercao de texto novo) nao deveria ter nenhum uso highlight-only (sem "text") -- isso e exclusivo do tipo Redundant agora'
+  Assert empty(ghost_highlight_only), 'the ghost text type (which implies inserting new text) should have no highlight-only use (without "text") -- that belongs to the Redundant type now'
 After:
   call vim_ai_autocomplete#ClearSuggestion()
   bdelete!
 
-Execute (IT-002g ClearSuggestion remove tambem o highlight do "depois" redundante):
+Execute (IT-002g ClearSuggestion also removes the highlight of the redundant "after"):
   new
   call setline(1, 'def foo()')
   call cursor(1, 8)
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    return a + b'], 1)
   call vim_ai_autocomplete#ClearSuggestion()
-  AssertEqual [], prop_list(1), 'ClearSuggestion deveria remover TODOS os props (ghost text e o highlight redundante)'
+  AssertEqual [], prop_list(1), 'ClearSuggestion should remove ALL props (ghost text and the redundant highlight)'
 After:
   bdelete!
 
-Execute (IT-002h Trigger invalida a sugestao visivel se o cursor se moveu pra longe de onde ela foi mostrada):
-  " Achado real, reportado pelo Alberto: mover o cursor com as setas antes
-  " de aceitar (Tab) corrompia o buffer -- "def mergesortarr):" (o "("
-  " sumiu, sobrou um ")" extra no fim). Causa raiz: Trigger() (chamado a
-  " cada CursorMovedI) so reiniciava o debounce, nunca invalidava a
-  " sugestao ja visivel -- aceitar uma sugestao calculada pra uma posicao
-  " diferente da atual insere tudo no lugar errado.
+Execute (IT-002h Trigger invalidates the visible suggestion when the cursor moved away from where it was shown):
+  " Real finding: moving the cursor with the arrows before accepting (Tab)
+  " corrupted the buffer -- "def mergesortarr):" (the "(" vanished and an
+  " extra ")" was left at the end). Root cause: Trigger() (called on every
+  " CursorMovedI) only restarted the debounce, never invalidated an already
+  " visible suggestion -- accepting a suggestion computed for a different
+  " position writes everything in the wrong place.
   new
   call setline(1, 'def foo()')
   call cursor(1, 8)
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    return a + b'], 1)
-  Assert vim_ai_autocomplete#IsVisible(), 'setup invalido: sugestao deveria estar visivel'
-  " simula o cursor se movendo (ex: seta pra esquerda) pra ANTES do "("
+  Assert vim_ai_autocomplete#IsVisible(), 'invalid setup: the suggestion should be visible'
+  " simulates the cursor moving (e.g. left arrow) to BEFORE the "("
   call cursor(1, 7)
   call vim_ai_autocomplete#Trigger()
-  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Trigger deveria invalidar a sugestao quando o cursor sai de onde ela foi mostrada'
+  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Trigger should invalidate the suggestion when the cursor leaves where it was shown'
 After:
   bdelete!
 
-Execute (IT-002i Trigger NAO invalida a sugestao se o cursor continua na mesma posicao):
+Execute (IT-002i Trigger does NOT invalidate the suggestion when the cursor is still at the same position):
   new
   call setline(1, 'def foo()')
   call cursor(1, 8)
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    return a + b'], 1)
-  " cursor nao se moveu -- Trigger so deveria reiniciar o debounce, nao
-  " limpar a sugestao ja mostrada
+  " the cursor did not move -- Trigger should only restart the debounce, not
+  " clear the suggestion already on screen
   call vim_ai_autocomplete#Trigger()
-  Assert vim_ai_autocomplete#IsVisible(), 'Trigger nao deveria invalidar a sugestao quando o cursor NAO se moveu'
+  Assert vim_ai_autocomplete#IsVisible(), 'Trigger should not invalidate the suggestion when the cursor did NOT move'
 After:
   bdelete!
 
-Execute (IT-002d Accept via mapeamento real de <Tab> nao dispara E565 (mudar buffer durante avaliacao de <expr>)):
+Execute (IT-002d Accept through the real <Tab> mapping does not throw E565 (changing the buffer during <expr> evaluation)):
   call vim_ai_autocomplete#SetupTabWrap()
   new
   setlocal filetype=python
@@ -147,27 +147,27 @@ Execute (IT-002d Accept via mapeamento real de <Tab> nao dispara E565 (mudar buf
   catch /E565/
     let threw = 1
   endtry
-  AssertEqual 0, threw, 'aceitar via <Tab> de verdade (nao via :call direto) nao deveria disparar E565'
+  AssertEqual 0, threw, 'accepting through a real <Tab> (not a direct :call) should not throw E565'
   sleep 10m
   AssertEqual ['def fibonacci(n):if n <= 1:', '        return n'], getline(1, 2)
 After:
   bdelete!
 
-Execute (IT-003 SetupProviderToggle registra ,pr e o comando so com 2+ modelos ativos):
+Execute (IT-003 SetupProviderToggle registers ,pr and the command only with 2+ active models):
   let two_models = vim_ai_autocomplete#DefaultModels()
   call vim_ai_autocomplete#SetupProviderToggle(two_models)
   let map_both = maparg(',pr', 'n', 0, 1)
-  Assert !empty(map_both), ',pr deveria estar registrado com 2+ modelos ativos'
-  Assert exists(':VimAiAutocompleteModel'), ':VimAiAutocompleteModel deveria estar registrado com 2+ modelos ativos'
+  Assert !empty(map_both), ',pr should be registered with 2+ active models'
+  Assert exists(':VimAiAutocompleteModel'), ':VimAiAutocompleteModel should be registered with 2+ active models'
 
   nunmap ,pr
   delcommand VimAiAutocompleteModel
   call vim_ai_autocomplete#SetupProviderToggle([two_models[0]])
   let map_one = maparg(',pr', 'n', 0, 1)
-  AssertEqual {}, map_one, ',pr NAO deveria estar registrado com so 1 modelo ativo'
-  Assert !exists(':VimAiAutocompleteModel'), ':VimAiAutocompleteModel NAO deveria estar registrado com so 1 modelo ativo'
+  AssertEqual {}, map_one, ',pr should NOT be registered with only 1 active model'
+  Assert !exists(':VimAiAutocompleteModel'), ':VimAiAutocompleteModel should NOT be registered with only 1 active model'
 
-Execute (IT-004 ToggleProvider cicla pela lista ativa, dando a volta no fim):
+Execute (IT-004 ToggleProvider cycles through the active list, wrapping around at the end):
   let g:vim_ai_autocomplete_provider = 'gemini'
   let g:vim_ai_autocomplete_models = [
         \ {'name': 'gemini', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'IT004_KEY_A'},
@@ -182,82 +182,82 @@ Execute (IT-004 ToggleProvider cicla pela lista ativa, dando a volta no fim):
   call vim_ai_autocomplete#ToggleProvider()
   AssertEqual 'terceiro', g:vim_ai_autocomplete_provider
   call vim_ai_autocomplete#ToggleProvider()
-  AssertEqual 'gemini', g:vim_ai_autocomplete_provider, 'deveria dar a volta pro primeiro depois do ultimo'
+  AssertEqual 'gemini', g:vim_ai_autocomplete_provider, 'should wrap around to the first one after the last'
 After:
   unlet g:vim_ai_autocomplete_models
   unlet $IT004_KEY_A
   unlet $IT004_KEY_B
   unlet $IT004_KEY_C
 
-Execute (IT-005 o plugin NAO mapeia mais o <Esc> no insert mode):
-  " Regressao da causa raiz: o wrap antigo engolia o <Esc> sempre que havia
-  " sugestao visivel -- o usuario apertava <Esc> pra sair do insert, continuava
-  " no insert, e as teclas seguintes viravam texto no buffer.
-  Assert !exists('*vim_ai_autocomplete#EscHandler'), 'EscHandler nao deveria mais existir'
-  Assert !exists('*vim_ai_autocomplete#SetupEscWrap'), 'SetupEscWrap nao deveria mais existir'
+Execute (IT-005 the plugin no longer maps <Esc> in insert mode):
+  " Root-cause regression: the old wrap swallowed <Esc> whenever a suggestion
+  " was visible -- the user pressed <Esc> to leave insert mode, stayed in
+  " insert mode, and the following keystrokes turned into buffer text.
+  Assert !exists('*vim_ai_autocomplete#EscHandler'), 'EscHandler should no longer exist'
+  Assert !exists('*vim_ai_autocomplete#SetupEscWrap'), 'SetupEscWrap should no longer exist'
   let esc_map = maparg('<Esc>', 'i', 0, 1)
   if !empty(esc_map)
     Assert stridx(get(esc_map, 'rhs', ''), 'vim_ai_autocomplete') < 0,
-          \ 'o plugin nao pode sequestrar o <Esc> no insert mode'
+          \ 'the plugin may not hijack <Esc> in insert mode'
   endif
 After:
-  " Este bloco nao abre buffer nem define global nenhuma -- o After vazio
-  " existe pra nao herdar o do bloco anterior (Vader propaga o ultimo After
-  " definido pros blocos seguintes).
+  " This block opens no buffer and defines no global -- the empty After exists
+  " so it does not inherit the previous one (Vader propagates the last After
+  " defined to the following blocks).
 
-Execute (IT-006 Dismiss descarta a sugestao sem sair do insert mode):
+Execute (IT-006 Dismiss discards the suggestion without leaving insert mode):
   new
   call setline(1, 'def foo(')
   call cursor(1, 9)
   call vim_ai_autocomplete#ShowSuggestion(['a, b):', '    pass'])
-  AssertEqual 1, vim_ai_autocomplete#IsVisible(), 'pre-condicao: sugestao visivel'
+  AssertEqual 1, vim_ai_autocomplete#IsVisible(), 'precondition: the suggestion is visible'
   let result = vim_ai_autocomplete#Dismiss()
-  AssertEqual '', result, 'Dismiss deveria retornar string vazia (nao injeta nada no buffer)'
-  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Dismiss deveria limpar a sugestao'
+  AssertEqual '', result, 'Dismiss should return an empty string (it injects nothing into the buffer)'
+  AssertEqual 0, vim_ai_autocomplete#IsVisible(), 'Dismiss should clear the suggestion'
 After:
   bdelete!
 
-Execute (IT-018 SplitDisplayTail: sugestao que fecha o proprio parenteses nao renderiza ')' duas vezes):
-  " O ghost text e' texto virtual: cada caractere empurra o texto real da linha
-  " pra direita. Com a cauda cortada, a tela vira exatamente o texto final.
+Execute (IT-018 SplitDisplayTail: a suggestion closing its own parenthesis does not render ')' twice):
+  " Ghost text is virtual text: every character pushes the real line to the
+  " right. With the tail trimmed, the screen becomes exactly the final text.
   let [lines, ra] = vim_ai_autocomplete#SplitDisplayTail(['Continuous Integration)'], ')', 1)
-  AssertEqual ['Continuous Integration'], lines, 'o ")" da sugestao deveria sair da exibicao'
-  AssertEqual 0, ra, 'sem cauda duplicada, nada mais precisa ser descartado'
+  AssertEqual ['Continuous Integration'], lines, 'the ")" from the suggestion should leave the display'
+  AssertEqual 0, ra, 'with no duplicated tail, nothing else needs discarding'
 
-Execute (IT-019 SplitDisplayTail: fechamento no MEIO da sugestao nao e cortado):
+Execute (IT-019 SplitDisplayTail: a closer in the MIDDLE of the suggestion is not trimmed):
   let [lines, ra] = vim_ai_autocomplete#SplitDisplayTail(['x) { return; }'], ')', 1)
-  AssertEqual ['x) { return; }'], lines, 'cortar a cauda aqui produziria texto errado'
-  AssertEqual 1, ra, 'segue descartando o ")" real, como antes'
+  AssertEqual ['x) { return; }'], lines, 'trimming the tail here would produce wrong text'
+  AssertEqual 1, ra, 'keeps discarding the real ")", as before'
 
-Execute (IT-020 SplitDisplayTail: o texto final aceito nao muda com o corte):
-  for case in [[['Continuous Integration)'], ')', 1], [['ola")'], '")', 2], [['x) { return; }'], ')', 1], [['a,', '    b)'], ')', 1], [[')'], ')', 1]]
+Execute (IT-020 SplitDisplayTail: the final accepted text does not change with the trim):
+  for case in [[['Continuous Integration)'], ')', 1], [['hi")'], '")', 2], [['x) { return; }'], ')', 1], [['a,', '    b)'], ')', 1], [[')'], ')', 1]]
     let [lines, ra] = vim_ai_autocomplete#SplitDisplayTail(case[0], case[1], case[2])
-    let antes = join(case[0], "\n") . strpart(case[1], case[2])
-    let depois = join(lines, "\n") . strpart(case[1], ra)
-    AssertEqual antes, depois, 'o corte nao pode mudar o texto final aceito: ' . string(case)
+    let before = join(case[0], "\n") . strpart(case[1], case[2])
+    let after = join(lines, "\n") . strpart(case[1], ra)
+    AssertEqual before, after, 'the trim must not change the final accepted text: ' . string(case)
   endfor
 
-Execute (IT-007 ,pt esta registrado no plugin (mesmo mapeamento existe no lado Neovim)):
+Execute (IT-007 ,pt is registered by the plugin (the same mapping exists on the Neovim side)):
   let map = maparg(',pt', 'n', 0, 1)
-  Assert !empty(map), ',pt deveria estar registrado (toggle de auto-trigger, sem depender de API key)'
+  Assert !empty(map), ',pt should be registered (auto-trigger toggle, independent of any API key)'
 
-Execute (IT-008 ToggleAutoTrigger alterna g:vim_ai_autocomplete_auto_trigger):
+Execute (IT-008 ToggleAutoTrigger flips g:vim_ai_autocomplete_auto_trigger):
   let g:vim_ai_autocomplete_auto_trigger = 1
   call vim_ai_autocomplete#ToggleAutoTrigger()
   AssertEqual 0, g:vim_ai_autocomplete_auto_trigger
   call vim_ai_autocomplete#ToggleAutoTrigger()
   AssertEqual 1, g:vim_ai_autocomplete_auto_trigger
 
-Execute (IT-009 Trigger nao agenda timer quando auto-trigger esta desligado):
+Execute (IT-009 Trigger schedules no timer when auto-trigger is off):
   let g:vim_ai_autocomplete_auto_trigger = 0
   let before = len(timer_info())
   call vim_ai_autocomplete#Trigger()
   let after = len(timer_info())
-  AssertEqual before, after, 'com auto-trigger desligado, Trigger nao deveria criar nenhum timer novo'
+  AssertEqual before, after, 'with auto-trigger off, Trigger should create no new timer'
 After:
   let g:vim_ai_autocomplete_auto_trigger = 1
 
-Execute (IT-010 SelectModel: nome valido e ativo troca o provider):
+Execute (IT-010 SelectModel: a valid, active name switches the provider):
   let g:vim_ai_autocomplete_provider = 'gemini'
   let g:vim_ai_autocomplete_models = [
         \ {'name': 'gemini', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'IT010_KEY_A'},
@@ -272,50 +272,50 @@ After:
   unlet $IT010_KEY_A
   unlet $IT010_KEY_B
 
-Execute (IT-011 SelectModel: nome inexistente na config -> erro, nao muda o provider):
+Execute (IT-011 SelectModel: a name missing from the config -> error, provider unchanged):
   let g:vim_ai_autocomplete_provider = 'gemini'
   let g:vim_ai_autocomplete_models = [{'name': 'gemini', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'IT011_KEY_A'}]
   let $IT011_KEY_A = 'a'
   let threw = 0
   try
-    call vim_ai_autocomplete#SelectModel('nao-existe')
+    call vim_ai_autocomplete#SelectModel('does-not-exist')
   catch
     let threw = 1
   endtry
-  Assert threw, 'SelectModel com nome invalido deveria lancar erro (echoerr)'
-  AssertEqual 'gemini', g:vim_ai_autocomplete_provider, 'provider nao deveria mudar quando o nome e invalido'
+  Assert threw, 'SelectModel with an invalid name should raise an error (echoerr)'
+  AssertEqual 'gemini', g:vim_ai_autocomplete_provider, 'the provider should not change when the name is invalid'
 After:
   unlet g:vim_ai_autocomplete_models
   unlet $IT011_KEY_A
 
-Execute (IT-012 SelectModel: nome existe na config mas sem key ativa -> erro, nao muda o provider):
+Execute (IT-012 SelectModel: a name present in the config but with no active key -> error, provider unchanged):
   let g:vim_ai_autocomplete_provider = 'gemini'
   let g:vim_ai_autocomplete_models = [
         \ {'name': 'gemini', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'IT012_KEY_A'},
-        \ {'name': 'sem-key', 'family': 'gemini', 'model_id': 'y', 'api_key_env': 'IT012_KEY_QUE_NAO_EXISTE'},
+        \ {'name': 'no-key', 'family': 'gemini', 'model_id': 'y', 'api_key_env': 'IT012_KEY_THAT_DOES_NOT_EXIST'},
         \ ]
   let $IT012_KEY_A = 'a'
   let threw = 0
   try
-    call vim_ai_autocomplete#SelectModel('sem-key')
+    call vim_ai_autocomplete#SelectModel('no-key')
   catch
     let threw = 1
   endtry
-  Assert threw, 'SelectModel pra modelo configurado mas sem key ativa deveria lancar erro'
+  Assert threw, 'SelectModel for a configured model with no active key should raise an error'
   AssertEqual 'gemini', g:vim_ai_autocomplete_provider
 After:
   unlet g:vim_ai_autocomplete_models
   unlet $IT012_KEY_A
 
-Execute (IT-013 CompleteModelNames: so sugere nomes ativos, filtrando pelo arglead):
+Execute (IT-013 CompleteModelNames: suggests only active names, filtering by arglead):
   let g:vim_ai_autocomplete_models = [
         \ {'name': 'gemini', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'IT013_KEY_A'},
-        \ {'name': 'gpt-fake', 'family': 'gemini', 'model_id': 'y', 'api_key_env': 'IT013_KEY_SEM_VALOR'},
+        \ {'name': 'gpt-fake', 'family': 'gemini', 'model_id': 'y', 'api_key_env': 'IT013_KEY_WITH_NO_VALUE'},
         \ ]
   let $IT013_KEY_A = 'a'
   AssertEqual ['gemini'], vim_ai_autocomplete#CompleteModelNames('', '', 0)
   AssertEqual ['gemini'], vim_ai_autocomplete#CompleteModelNames('g', '', 0)
-  AssertEqual [], vim_ai_autocomplete#CompleteModelNames('gpt', '', 0), 'gpt-fake nao esta ativo (sem key), nao deveria aparecer'
+  AssertEqual [], vim_ai_autocomplete#CompleteModelNames('gpt', '', 0), 'gpt-fake is not active (no key), it should not show up'
 After:
   unlet g:vim_ai_autocomplete_models
   unlet $IT013_KEY_A

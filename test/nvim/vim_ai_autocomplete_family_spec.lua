@@ -7,7 +7,7 @@ describe("vim-ai-autocomplete.family.extract_api_error_message", function()
   end)
 
   it("returns nil when it is not JSON", function()
-    assert.is_nil(family.extract_api_error_message('nao e json'))
+    assert.is_nil(family.extract_api_error_message('not json'))
   end)
 
   it("returns nil when it does not have the expected shape", function()

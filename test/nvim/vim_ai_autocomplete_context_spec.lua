@@ -2,9 +2,9 @@ local context = require('vim-ai-autocomplete.context')
 
 describe("vim-ai-autocomplete.context.split_lines_at_cursor", function()
   it("splits the current line at the cursor column -- it never goes in whole on either side", function()
-    local before, after = context.split_lines_at_cursor({ 'linha -1' }, 'def soma()', 10, { 'linha +1' })
-    assert.are.same({ 'linha -1', 'def soma(' }, before)
-    assert.are.same({ ')', 'linha +1' }, after)
+    local before, after = context.split_lines_at_cursor({ 'line -1' }, 'def sum()', 9, { 'line +1' })
+    assert.are.same({ 'line -1', 'def sum(' }, before)
+    assert.are.same({ ')', 'line +1' }, after)
   end)
 
   it("col=1: nothing before it on the current line", function()
@@ -68,7 +68,7 @@ describe("vim-ai-autocomplete.context.treesitter_scope_start_line", function()
   end)
 
   it("no parser available for the filetype -> nil (falls back to the line-based cut)", function()
-    vim.bo[buf].filetype = 'nao-existe-essa-linguagem'
+    vim.bo[buf].filetype = 'no-such-language'
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'qualquer coisa' })
     vim.api.nvim_set_current_buf(buf)
     assert.is_nil(context.treesitter_scope_start_line(buf, 1, 1))

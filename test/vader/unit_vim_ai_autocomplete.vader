@@ -1,9 +1,9 @@
-" UN-000a a UN-000j: fundacao da config de N modelos -- DefaultModels(),
-" ResolveActiveModels(), FindModelByName(). Substitui o par de booleanos
-" has_gemini/has_claude por uma lista configuravel (ver spec
+" UN-000a to UN-000j: the foundation of the N-model config -- DefaultModels(),
+" ResolveActiveModels(), FindModelByName(). Replaces the has_gemini/has_claude
+" pair of booleans with a configurable list (see the spec at
 " docs/superpowers/specs/2026-07-21-vim-ai-autocomplete-multi-model-design.md).
 
-Execute (UN-000a DefaultModels: dois modelos, gemini e claude, com os model_id atuais):
+Execute (UN-000a DefaultModels: two models, gemini and claude, with the current model_ids):
   let models = vim_ai_autocomplete#DefaultModels()
   AssertEqual 2, len(models)
   AssertEqual 'gemini', models[0].name
@@ -15,7 +15,7 @@ Execute (UN-000a DefaultModels: dois modelos, gemini e claude, com os model_id a
   AssertEqual 'claude-sonnet-4-5-20250929', models[1].model_id
   AssertEqual 'ANTHROPIC_API_KEY', models[1].api_key_env
 
-Execute (UN-000b ResolveActiveModels: filtra por env var presente e nao-vazia):
+Execute (UN-000b ResolveActiveModels: filters by an env var that is present and non-empty):
   let $UN_TEST_KEY_A = 'valor-a'
   if exists('$UN_TEST_KEY_B')
     unlet $UN_TEST_KEY_B
@@ -31,7 +31,7 @@ Execute (UN-000b ResolveActiveModels: filtra por env var presente e nao-vazia):
 After:
   unlet $UN_TEST_KEY_A
 
-Execute (UN-000c ResolveActiveModels: env var vazia (setada mas string vazia) NAO conta como presente):
+Execute (UN-000c ResolveActiveModels: an empty env var (set but an empty string) does NOT count as present):
   let $UN_TEST_KEY_EMPTY = ''
   let models = [{'name': 'a', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'UN_TEST_KEY_EMPTY'}]
   let [active, warnings] = vim_ai_autocomplete#ResolveActiveModels(models)
@@ -39,13 +39,13 @@ Execute (UN-000c ResolveActiveModels: env var vazia (setada mas string vazia) NA
 After:
   unlet $UN_TEST_KEY_EMPTY
 
-Execute (UN-000d ResolveActiveModels: nenhuma env var presente -> lista ativa vazia):
+Execute (UN-000d ResolveActiveModels: no env var present -> empty active list):
   let models = [{'name': 'a', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'UN_TEST_KEY_NUNCA_EXISTE'}]
   let [active, warnings] = vim_ai_autocomplete#ResolveActiveModels(models)
   AssertEqual [], active
   AssertEqual [], warnings
 
-Execute (UN-000e ResolveActiveModels: todas as env vars presentes -> todos ativos, na mesma ordem):
+Execute (UN-000e ResolveActiveModels: every env var present -> all active, in the same order):
   let $UN_TEST_KEY_A = 'a'
   let $UN_TEST_KEY_B = 'b'
   let $UN_TEST_KEY_C = 'c'
@@ -61,7 +61,7 @@ After:
   unlet $UN_TEST_KEY_B
   unlet $UN_TEST_KEY_C
 
-Execute (UN-000f ResolveActiveModels: nome duplicado -> so a primeira ocorrencia entra, com aviso):
+Execute (UN-000f ResolveActiveModels: duplicate name -> only the first occurrence gets in, with a warning):
   let $UN_TEST_KEY_A = 'a'
   let $UN_TEST_KEY_A2 = 'a2'
   let models = [
@@ -77,24 +77,24 @@ After:
   unlet $UN_TEST_KEY_A
   unlet $UN_TEST_KEY_A2
 
-Execute (UN-000g ResolveActiveModels: lista vazia -> ativa vazia, sem avisos):
+Execute (UN-000g ResolveActiveModels: empty list -> empty active list, no warnings):
   let [active, warnings] = vim_ai_autocomplete#ResolveActiveModels([])
   AssertEqual [], active
   AssertEqual [], warnings
 
-Execute (UN-000h FindModelByName: acha pelo nome):
+Execute (UN-000h FindModelByName: finds it by name):
   let models = [{'name': 'a', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'X'}]
   let found = vim_ai_autocomplete#FindModelByName(models, 'a')
   AssertEqual 'x', found.model_id
 
-Execute (UN-000i FindModelByName: nome nao existe -> v:null):
+Execute (UN-000i FindModelByName: the name does not exist -> v:null):
   let models = [{'name': 'a', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'X'}]
-  AssertEqual v:null, vim_ai_autocomplete#FindModelByName(models, 'nao-existe')
+  AssertEqual v:null, vim_ai_autocomplete#FindModelByName(models, 'does-not-exist')
 
-Execute (UN-000j FindModelByName: lista vazia -> v:null):
+Execute (UN-000j FindModelByName: empty list -> v:null):
   AssertEqual v:null, vim_ai_autocomplete#FindModelByName([], 'qualquer')
 
-Execute (UN-000k ActiveModels: usa g:vim_ai_autocomplete_models quando definida, em vez do default):
+Execute (UN-000k ActiveModels: uses g:vim_ai_autocomplete_models when defined, instead of the default):
   let $UN_TEST_ACTIVE_KEY = 'valor'
   let g:vim_ai_autocomplete_models = [{'name': 'custom', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'UN_TEST_ACTIVE_KEY'}]
   let active = vim_ai_autocomplete#ActiveModels()
@@ -107,12 +107,12 @@ After:
     unlet $UN_TEST_ACTIVE_KEY
   endif
 
-Execute (UN-000l ActiveModels: sem g:vim_ai_autocomplete_models definida, usa o default):
+Execute (UN-000l ActiveModels: with no g:vim_ai_autocomplete_models defined, uses the default):
   if exists('g:vim_ai_autocomplete_models')
     unlet g:vim_ai_autocomplete_models
   endif
   let $GEMINI_API_KEY_BACKUP_UN000L = exists('$GEMINI_API_KEY') ? $GEMINI_API_KEY : ''
-  let $GEMINI_API_KEY = 'fake-pra-teste'
+  let $GEMINI_API_KEY = 'fake-for-testing'
   if exists('$ANTHROPIC_API_KEY')
     unlet $ANTHROPIC_API_KEY
   endif
@@ -124,7 +124,7 @@ After:
   endif
   unlet $GEMINI_API_KEY_BACKUP_UN000L
 
-Execute (UN-000m ActiveModels: config com nome duplicado nao lanca excecao, retorna a lista deduplicada):
+Execute (UN-000m ActiveModels: a config with a duplicate name throws no exception, returns the deduplicated list):
   let $UN_TEST_DUP_KEY_A = 'a'
   let $UN_TEST_DUP_KEY_B = 'b'
   let g:vim_ai_autocomplete_models = [
@@ -138,7 +138,7 @@ Execute (UN-000m ActiveModels: config com nome duplicado nao lanca excecao, reto
   catch
     let threw = 1
   endtry
-  AssertEqual 0, threw, 'ActiveModels() NAO deveria lancar excecao so porque ResolveActiveModels retornou avisos'
+  AssertEqual 0, threw, 'ActiveModels() should NOT throw just because ResolveActiveModels returned warnings'
   AssertEqual 1, len(active)
   AssertEqual 'primeiro', active[0].model_id
 After:
@@ -148,10 +148,10 @@ After:
   unlet $UN_TEST_DUP_KEY_A
   unlet $UN_TEST_DUP_KEY_B
 
-" UN-001 a UN-004: vim_ai_autocomplete#ResolveDefaultModel() -- generaliza
-" o antigo ResolveProvider(has_gemini, has_claude) pra N modelos.
+" UN-001 to UN-004: vim_ai_autocomplete#ResolveDefaultModel() -- generalises
+" the old ResolveProvider(has_gemini, has_claude) to N models.
 
-Execute (UN-001 ResolveDefaultModel: 2+ modelos ativos -> primeiro da lista ativa, sem aviso):
+Execute (UN-001 ResolveDefaultModel: 2+ active models -> first of the active list, no warning):
   let all = vim_ai_autocomplete#DefaultModels()
   let active = [all[0], all[1]]
   let [name, level, message] = vim_ai_autocomplete#ResolveDefaultModel(all, active)
@@ -159,23 +159,23 @@ Execute (UN-001 ResolveDefaultModel: 2+ modelos ativos -> primeiro da lista ativ
   AssertEqual v:null, level
   AssertEqual v:null, message
 
-Execute (UN-002 ResolveDefaultModel: so 1 modelo ativo -> esse mesmo, com aviso mencionando o nome):
+Execute (UN-002 ResolveDefaultModel: only 1 active model -> that one, with a warning mentioning its name):
   let all = vim_ai_autocomplete#DefaultModels()
   let active = [all[0]]
   let [name, level, message] = vim_ai_autocomplete#ResolveDefaultModel(all, active)
   AssertEqual 'gemini', name
   AssertEqual 'warn', level
-  Assert message =~# 'gemini', 'mensagem deveria mencionar o nome do unico modelo ativo'
+  Assert message =~# 'gemini', 'the message should mention the name of the only active model'
 
-Execute (UN-003 ResolveDefaultModel: nenhum modelo ativo -> erro, sem nome, mensagem cita as env vars configuradas):
+Execute (UN-003 ResolveDefaultModel: no active model -> error, no name, the message cites the configured env vars):
   let all = vim_ai_autocomplete#DefaultModels()
   let [name, level, message] = vim_ai_autocomplete#ResolveDefaultModel(all, [])
   AssertEqual v:null, name
   AssertEqual 'error', level
-  Assert message =~# 'GEMINI_API_KEY', 'mensagem deveria mencionar GEMINI_API_KEY'
-  Assert message =~# 'ANTHROPIC_API_KEY', 'mensagem deveria mencionar ANTHROPIC_API_KEY'
+  Assert message =~# 'GEMINI_API_KEY', 'the message should mention GEMINI_API_KEY'
+  Assert message =~# 'ANTHROPIC_API_KEY', 'the message should mention ANTHROPIC_API_KEY'
 
-Execute (UN-004 ResolveDefaultModel: com 3 modelos configurados, so 1 ativo -> mensagem de erro lista os 3):
+Execute (UN-004 ResolveDefaultModel: with 3 models configured and only 1 active -> the error message lists all 3):
   let all = [
         \ {'name': 'a', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'ENV_A'},
         \ {'name': 'b', 'family': 'gemini', 'model_id': 'y', 'api_key_env': 'ENV_B'},
@@ -183,64 +183,65 @@ Execute (UN-004 ResolveDefaultModel: com 3 modelos configurados, so 1 ativo -> m
         \ ]
   let [name, level, message] = vim_ai_autocomplete#ResolveDefaultModel(all, [])
   AssertEqual 'error', level
-  Assert message =~# 'ENV_A', 'mensagem deveria citar ENV_A'
-  Assert message =~# 'ENV_B', 'mensagem deveria citar ENV_B'
-  Assert message =~# 'ENV_C', 'mensagem deveria citar ENV_C'
+  Assert message =~# 'ENV_A', 'the message should cite ENV_A'
+  Assert message =~# 'ENV_B', 'the message should cite ENV_B'
+  Assert message =~# 'ENV_C', 'the message should cite ENV_C'
 
-" UN-005 a UN-010: contexto, montagem de request, parsing de resposta.
-" Nenhum destes testes faz chamada de rede real -- so as funcoes puras.
+" UN-005 to UN-010: context, request assembly, response parsing. None of
+" these tests makes a real network call -- only the pure functions.
 
-Execute (UN-005 BuildContext: sem truncar quando cabe no teto):
+Execute (UN-005 BuildContext: no truncation when it fits the cap):
   let ctx = vim_ai_autocomplete#BuildContext(['abc'], ['def'], 100)
   AssertEqual 'abc', ctx.before
   AssertEqual 'def', ctx.after
 
-Execute (UN-006 BuildContext: trunca respeitando 75/25 quando excede o teto):
+Execute (UN-006 BuildContext: truncates respecting 75/25 when it exceeds the cap):
   let long_before = repeat('x', 100)
   let ctx = vim_ai_autocomplete#BuildContext(split(long_before, '\zs'), ['y'], 40)
   AssertEqual 30, strchars(ctx.before)
   AssertEqual 1, strchars(ctx.after)
 
-Execute (UN-007 BuildGeminiRequest: produz JSON valido com o prompt, incluindo o texto DEPOIS do cursor):
+Execute (UN-007 BuildGeminiRequest: produces valid JSON with the prompt, including the text AFTER the cursor):
   let req = vim_ai_autocomplete#BuildGeminiRequest({'before': 'def foo(', 'after': ')'})
   let decoded = json_decode(req)
-  Assert decoded.contents[0].parts[0].text =~# 'def foo(', 'request deveria conter o contexto de antes'
-  Assert decoded.contents[0].parts[0].text =~# ')', 'request deveria conter o contexto de depois (FIM), senao o modelo duplica o que ja existe'
+  Assert decoded.contents[0].parts[0].text =~# 'def foo(', 'the request should contain the before context'
+  Assert decoded.contents[0].parts[0].text =~# ')', 'the request should contain the after context (FIM), otherwise the model duplicates what already exists'
 
-Execute (UN-008 BuildClaudeRequest: produz JSON valido com o model certo, incluindo o texto DEPOIS do cursor):
+Execute (UN-008 BuildClaudeRequest: produces valid JSON with the right model, including the text AFTER the cursor):
   let req = vim_ai_autocomplete#BuildClaudeRequest({'before': 'def foo(', 'after': ')'}, 'claude-sonnet-4-5-20250929')
   let decoded = json_decode(req)
   AssertEqual 'claude-sonnet-4-5-20250929', decoded.model
-  Assert decoded.messages[0].content =~# 'def foo(', 'request deveria conter o contexto de antes'
+  Assert decoded.messages[0].content =~# 'def foo(', 'the request should contain the before context'
   Assert decoded.messages[0].content =~# 'AFTER THE CURSOR', 'the request should tell the model about the text after the cursor'
 
-Execute (UN-009 ParseGeminiResponse: extrai as linhas do formato real da API):
-  let fake = json_encode({'candidates': [{'content': {'parts': [{'text': "linha1\nlinha2"}]}}]})
-  AssertEqual ['linha1', 'linha2'], vim_ai_autocomplete#ParseGeminiResponse(fake)
+Execute (UN-009 ParseGeminiResponse: extracts the lines from the real API shape):
+  let fake = json_encode({'candidates': [{'content': {'parts': [{'text': "line1\nline2"}]}}]})
+  AssertEqual ['line1', 'line2'], vim_ai_autocomplete#ParseGeminiResponse(fake)
 
-" UN-009a/b: candidate bloqueado (ex: filtro de seguranca, finishReason
-" SAFETY/RECITATION) vem SEM "content" ou sem "parts" -- resposta HTTP 200
-" legitima, so sem sugestao de verdade. Achado real, reportado pelo Alberto
-" 2026-07-22 (smoke test ao vivo do port Neovim): "attempt to index field
-" 'parts' (a nil value)" -- o acesso direto data.candidates[0].content.parts[0]
-" lancava excecao Lua quando content/parts nao existem. Confirmado o MESMO
-" bug (sem guarda) no lado Vim -- corrigido nos dois lados juntos.
-Execute (UN-009a ParseGeminiResponse: candidate sem "content" (bloqueado por filtro de seguranca) -> lista vazia, sem erro):
+" UN-009a/b: a blocked candidate (e.g. a safety filter, finishReason
+" SAFETY/RECITATION) comes back WITHOUT "content", or without "parts" -- a
+" legitimate HTTP 200 response, just with no actual suggestion. Real finding
+" from a live smoke test of the Neovim port on 2026-07-22: "attempt to index
+" field 'parts' (a nil value)" -- the direct access
+" data.candidates[0].content.parts[0] threw a Lua exception when
+" content/parts are absent. The SAME bug (unguarded) was confirmed on the Vim
+" side -- both were fixed together.
+Execute (UN-009a ParseGeminiResponse: candidate with no "content" (blocked by a safety filter) -> empty list, no error):
   let fake = json_encode({'candidates': [{'finishReason': 'SAFETY'}]})
   AssertEqual [], vim_ai_autocomplete#ParseGeminiResponse(fake)
 
-Execute (UN-009b ParseGeminiResponse: candidate com "content" mas sem "parts" -> lista vazia, sem erro):
+Execute (UN-009b ParseGeminiResponse: candidate with "content" but no "parts" -> empty list, no error):
   let fake = json_encode({'candidates': [{'content': {'role': 'model'}, 'finishReason': 'RECITATION'}]})
   AssertEqual [], vim_ai_autocomplete#ParseGeminiResponse(fake)
 
-Execute (UN-010 ParseClaudeResponse: extrai as linhas do formato real da API):
-  let fake = json_encode({'content': [{'text': "linhaA\nlinhaB\nlinhaC"}]})
-  AssertEqual ['linhaA', 'linhaB', 'linhaC'], vim_ai_autocomplete#ParseClaudeResponse(fake)
+Execute (UN-010 ParseClaudeResponse: extracts the lines from the real API shape):
+  let fake = json_encode({'content': [{'text': "lineA\nlineB\nlineC"}]})
+  AssertEqual ['lineA', 'lineB', 'lineC'], vim_ai_autocomplete#ParseClaudeResponse(fake)
 
-" UN-011 a UN-015: ShowSuggestion/ClearSuggestion/IsVisible -- introspeccao
-" via prop_list(), sem depender de tela/renderizacao visual de verdade.
+" UN-011 to UN-015: ShowSuggestion/ClearSuggestion/IsVisible -- introspection
+" through prop_list(), without depending on a real screen or visual render.
 
-Execute (UN-011 ShowSuggestion desenha 1 prop por linha da sugestao):
+Execute (UN-011 ShowSuggestion draws 1 prop per suggestion line):
   new
   call setline(1, 'def foo(')
   call cursor(1, 9)
@@ -251,7 +252,7 @@ Execute (UN-011 ShowSuggestion desenha 1 prop por linha da sugestao):
 After:
   bdelete!
 
-Execute (UN-012 ShowSuggestion nao altera o conteudo real do buffer):
+Execute (UN-012 ShowSuggestion does not change the real buffer content):
   new
   call setline(1, 'def foo(')
   call cursor(1, 9)
@@ -261,7 +262,7 @@ Execute (UN-012 ShowSuggestion nao altera o conteudo real do buffer):
 After:
   bdelete!
 
-Execute (UN-013 IsVisible reflete o estado real):
+Execute (UN-013 IsVisible reflects the real state):
   new
   call setline(1, 'x')
   call cursor(1, 2)
@@ -273,43 +274,42 @@ Execute (UN-013 IsVisible reflete o estado real):
 After:
   bdelete!
 
-Execute (UN-014 ClearSuggestion remove TODAS as props da linha, nao so uma):
+Execute (UN-014 ClearSuggestion removes ALL props on the line, not just one):
   new
   call setline(1, 'x')
   call cursor(1, 2)
-  call vim_ai_autocomplete#ShowSuggestion(['linha1', 'linha2', 'linha3'])
-  AssertEqual 3, len(prop_list(1)), 'deveria ter 3 props (1 por linha da sugestao)'
+  call vim_ai_autocomplete#ShowSuggestion(['line1', 'line2', 'line3'])
+  AssertEqual 3, len(prop_list(1)), 'should have 3 props (1 per suggestion line)'
   call vim_ai_autocomplete#ClearSuggestion()
-  AssertEqual 0, len(prop_list(1)), 'ClearSuggestion deveria remover TODAS, nao so a primeira'
+  AssertEqual 0, len(prop_list(1)), 'ClearSuggestion should remove them ALL, not only the first'
 After:
   bdelete!
 
-Execute (UN-015 ClearSuggestion usa a linha salva, nao a posicao atual do cursor):
+Execute (UN-015 ClearSuggestion uses the saved line, not the current cursor position):
   new
-  call setline(1, ['linha um', 'linha dois'])
+  call setline(1, ['line one', 'line two'])
   call cursor(1, 1)
-  call vim_ai_autocomplete#ShowSuggestion(['sugestao'])
+  call vim_ai_autocomplete#ShowSuggestion(['suggestion'])
   AssertEqual 1, len(prop_list(1))
-  " simula o cursor tendo se movido (CursorMovedI dispara DEPOIS do movimento)
+  " simulates the cursor having moved (CursorMovedI fires AFTER the movement)
   call cursor(2, 1)
   call vim_ai_autocomplete#ClearSuggestion()
-  AssertEqual 0, len(prop_list(1)), 'deveria limpar a linha 1 (onde a sugestao estava), nao a linha 2 (onde o cursor esta agora)'
+  AssertEqual 0, len(prop_list(1)), 'should clear line 1 (where the suggestion was), not line 2 (where the cursor is now)'
 After:
   bdelete!
 
-" UN-016 a UN-017: vim_ai_autocomplete#BuildClaudeCommand() -- so via curl
-" cru com ANTHROPIC_API_KEY estatica. `ant` foi removido 2026-07-20 (nao
-" tinha vantagem de billing pro caso de uso deste plugin -- cobra do mesmo
-" credito de API pago por token que a key estatica, so muda a forma de
-" autenticar; ver [[project-neovim-setup-backlog]]).
+" UN-016 to UN-017: vim_ai_autocomplete#BuildClaudeCommand() -- raw curl with
+" a static ANTHROPIC_API_KEY only. `ant` was removed on 2026-07-20 (no billing
+" advantage for this plugin's use case -- it bills the same per-token paid API
+" credit the static key does, it only changes how you authenticate).
 
-Execute (UN-016 BuildClaudeCommand: monta comando curl com a key certa):
+Execute (UN-016 BuildClaudeCommand: builds the curl command with the right key):
   let ctx = {'before': 'def foo(', 'after': ')'}
   let result = vim_ai_autocomplete#BuildClaudeCommand(ctx, 'claude-sonnet-4-5-20250929', 'sk-ant-fake123')
   AssertEqual 'curl', result[0]
   AssertEqual 'x-api-key: sk-ant-fake123', result[6]
 
-Execute (UN-017 BuildClaudeCommand: endpoint, headers e corpo corretos):
+Execute (UN-017 BuildClaudeCommand: correct endpoint, headers and body):
   let ctx = {'before': 'def foo(', 'after': ')'}
   let result = vim_ai_autocomplete#BuildClaudeCommand(ctx, 'claude-sonnet-4-5-20250929', 'chave')
   AssertEqual 'https://api.anthropic.com/v1/messages', result[4]
@@ -317,31 +317,31 @@ Execute (UN-017 BuildClaudeCommand: endpoint, headers e corpo corretos):
   let body_idx = index(result, '-d') + 1
   let decoded = json_decode(result[body_idx])
   AssertEqual 'claude-sonnet-4-5-20250929', decoded.model
-  Assert decoded.messages[0].content =~# 'def foo(', 'corpo deveria conter o contexto'
+  Assert decoded.messages[0].content =~# 'def foo(', 'the body should contain the context'
 
-" UN-018 a UN-022: BuildGeminiCommand + FamilyHandler -- despacho por familia
-" de API (Gemini vs Anthropic Claude).
+" UN-018 to UN-022: BuildGeminiCommand + FamilyHandler -- dispatch by API
+" family (Gemini vs Anthropic Claude).
 
-Execute (UN-018 BuildGeminiCommand: monta comando curl com endpoint e model_id certos):
+Execute (UN-018 BuildGeminiCommand: builds the curl command with the right endpoint and model_id):
   let ctx = {'before': 'def foo(', 'after': ')'}
   let result = vim_ai_autocomplete#BuildGeminiCommand(ctx, 'gemini-3.1-flash-lite', 'minha-chave')
   AssertEqual 'curl', result[0]
-  Assert result[4] =~# 'gemini-3\.1-flash-lite', 'endpoint deveria conter o model_id'
-  Assert result[4] =~# 'key=minha-chave', 'endpoint deveria conter a api key'
+  Assert result[4] =~# 'gemini-3\.1-flash-lite', 'the endpoint should contain the model_id'
+  Assert result[4] =~# 'key=minha-chave', 'the endpoint should contain the api key'
 
-Execute (UN-019 BuildGeminiCommand: corpo contem o contexto):
+Execute (UN-019 BuildGeminiCommand: the body contains the context):
   let ctx = {'before': 'def foo(', 'after': ')'}
   let result = vim_ai_autocomplete#BuildGeminiCommand(ctx, 'gemini-3.1-flash-lite', 'chave')
   let body_idx = index(result, '-d') + 1
   let decoded = json_decode(result[body_idx])
-  Assert decoded.contents[0].parts[0].text =~# 'def foo(', 'corpo deveria conter o contexto'
+  Assert decoded.contents[0].parts[0].text =~# 'def foo(', 'the body should contain the context'
 
-Execute (UN-020 FamilyHandler: familia "gemini" devolve BuildGeminiCommand + ParseGeminiResponse):
+Execute (UN-020 FamilyHandler: the "gemini" family returns BuildGeminiCommand + ParseGeminiResponse):
   let handler = vim_ai_autocomplete#FamilyHandler('gemini')
   AssertEqual function('vim_ai_autocomplete#BuildGeminiCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseGeminiResponse'), handler.parse_response
 
-Execute (UN-021 FamilyHandler: familia "anthropic" devolve BuildClaudeCommand + ParseClaudeResponse):
+Execute (UN-021 FamilyHandler: the "anthropic" family returns BuildClaudeCommand + ParseClaudeResponse):
   let handler = vim_ai_autocomplete#FamilyHandler('anthropic')
   AssertEqual function('vim_ai_autocomplete#BuildClaudeCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseClaudeResponse'), handler.parse_response
@@ -355,12 +355,12 @@ Execute (UN-022 FamilyHandler: unknown family -> throws a clear exception):
   endtry
   AssertEqual 1, threw, 'should throw an exception mentioning "unknown family"'
 
-" UN-024 a UN-028: vim_ai_autocomplete#AdjustSuggestionLines() -- corrige o
-" caso (confirmado real, reproduzivel 3/3 com gemini-3.1-flash-lite) onde a
-" primeira linha da sugestao vem sem quebra de linha nem indentacao quando
-" o contexto termina em ":" (abertura de bloco Python).
+" UN-024 to UN-028: vim_ai_autocomplete#AdjustSuggestionLines() -- fixes the
+" case (confirmed real, reproducible 3/3 with gemini-3.1-flash-lite) where the
+" first line of the suggestion arrives with no line break and no indentation
+" when the context ends in ":" (a Python block opener).
 
-Execute (UN-024 AdjustSuggestionLines insere quebra de linha e indentacao quando contexto termina em dois-pontos, python, expandtab):
+Execute (UN-024 AdjustSuggestionLines inserts a line break and indentation when the context ends in a colon, python, expandtab):
   let lines = ['if n <= 1:', '        return n', '    else:', '        return fibonacci(n - 1) + fibonacci(n - 2)']
   let result = vim_ai_autocomplete#AdjustSuggestionLines(lines, 'def fibonacci(n):', 'python', 4, 1)
   AssertEqual [
@@ -371,111 +371,111 @@ Execute (UN-024 AdjustSuggestionLines insere quebra de linha e indentacao quando
         \ '        return fibonacci(n - 1) + fibonacci(n - 2)',
         \ ], result
 
-Execute (UN-025 AdjustSuggestionLines nao mexe quando contexto NAO termina em dois-pontos (continuacao normal na mesma linha)):
+Execute (UN-025 AdjustSuggestionLines leaves it alone when the context does NOT end in a colon (a normal same-line continuation)):
   let lines = ['a + b']
   let result = vim_ai_autocomplete#AdjustSuggestionLines(lines, '    return', 'python', 4, 1)
   AssertEqual ['a + b'], result
 
-Execute (UN-026 AdjustSuggestionLines nao mexe quando filetype nao e python):
+Execute (UN-026 AdjustSuggestionLines leaves it alone when the filetype is not python):
   let lines = ['if (n <= 1) {', '  return n;', '}']
   let result = vim_ai_autocomplete#AdjustSuggestionLines(lines, 'function fib(n) {', 'javascript', 2, 1)
   AssertEqual ['if (n <= 1) {', '  return n;', '}'], result
 
-Execute (UN-027 AdjustSuggestionLines nao mexe quando a sugestao ja veio com quebra de linha propria):
+Execute (UN-027 AdjustSuggestionLines leaves it alone when the suggestion already came with a line break of its own):
   let lines = ['', '    if n <= 1:', '        return n']
   let result = vim_ai_autocomplete#AdjustSuggestionLines(lines, 'def fibonacci(n):', 'python', 4, 1)
   AssertEqual ['', '    if n <= 1:', '        return n'], result
 
-Execute (UN-028 AdjustSuggestionLines usa tab quando noexpandtab):
+Execute (UN-028 AdjustSuggestionLines uses a tab when noexpandtab):
   let lines = ['if n <= 1:', '        return n']
   let result = vim_ai_autocomplete#AdjustSuggestionLines(lines, 'def fibonacci(n):', 'python', 4, 0)
   AssertEqual ['', "\tif n <= 1:", '        return n'], result
 
-Execute (UN-033 ExtractApiErrorMessage: extrai a mensagem de um corpo de erro valido):
+Execute (UN-033 ExtractApiErrorMessage: extracts the message from a valid error body):
   let raw = '{"type":"error","error":{"type":"invalid_request_error","message":"algo deu errado"}}'
   AssertEqual 'algo deu errado', vim_ai_autocomplete#ExtractApiErrorMessage(raw)
 
-Execute (UN-034 ExtractApiErrorMessage: string vazia pra JSON invalido ou sem campo error):
-  AssertEqual '', vim_ai_autocomplete#ExtractApiErrorMessage('nao e json')
+Execute (UN-034 ExtractApiErrorMessage: empty string for invalid JSON or a missing error field):
+  AssertEqual '', vim_ai_autocomplete#ExtractApiErrorMessage('not json')
   AssertEqual '', vim_ai_autocomplete#ExtractApiErrorMessage('{"candidates":[]}')
 
-Execute (UN-035 DescribeCompletionFailure: resposta com erro da API -> reporta a mensagem, com o nome do provider):
+Execute (UN-035 DescribeCompletionFailure: a response with an API error -> reports the message, with the provider name):
   let raw = '{"error":{"message":"Your credit balance is too low to access the Anthropic API."}}'
   let message = vim_ai_autocomplete#DescribeCompletionFailure('claude', 1, raw)
-  Assert message =~# 'claude', 'deveria mencionar o provider: ' . message
-  Assert message =~# 'credit balance', 'deveria repassar a mensagem original da API: ' . message
+  Assert message =~# 'claude', 'should mention the provider: ' . message
+  Assert message =~# 'credit balance', 'should pass through the original API message: ' . message
 
-Execute (UN-036 DescribeCompletionFailure: exit != 0 sem corpo de erro parseavel -> mensagem generica com o codigo):
-  let message = vim_ai_autocomplete#DescribeCompletionFailure('gemini', 7, 'algo que nao e json')
-  Assert message =~# 'gemini', 'deveria mencionar o provider: ' . message
-  Assert message =~# '7', 'deveria mencionar o exit code: ' . message
+Execute (UN-036 DescribeCompletionFailure: exit != 0 with no parseable error body -> a generic message with the code):
+  let message = vim_ai_autocomplete#DescribeCompletionFailure('gemini', 7, 'something that is not json')
+  Assert message =~# 'gemini', 'should mention the provider: ' . message
+  Assert message =~# '7', 'should mention the exit code: ' . message
 
-Execute (UN-037 DescribeCompletionFailure: exit 0 sem erro parseavel -> string vazia, nada pra reportar):
+Execute (UN-037 DescribeCompletionFailure: exit 0 with no parseable error -> empty string, nothing to report):
   AssertEqual '', vim_ai_autocomplete#DescribeCompletionFailure('gemini', 0, '')
 
-Execute (UN-038 ComputeTextOverlapLength: acha a sobreposicao no fim da sugestao):
+Execute (UN-038 ComputeTextOverlapLength: finds the overlap at the end of the suggestion):
   let lines = ['x, y)']
   AssertEqual 1, vim_ai_autocomplete#ComputeTextOverlapLength(lines, ')')
 
-Execute (UN-039 ComputeTextOverlapLength: sem sobreposicao -> 0):
+Execute (UN-039 ComputeTextOverlapLength: no overlap -> 0):
   let lines = ['x, y']
   AssertEqual 0, vim_ai_autocomplete#ComputeTextOverlapLength(lines, ')')
 
-Execute (UN-040 ComputeTextOverlapLength: sugestao inteira e so repeticao do que ja existe -> sobreposicao = tamanho todo):
+Execute (UN-040 ComputeTextOverlapLength: the whole suggestion just repeats what already exists -> overlap = full length):
   let lines = ['):', '    pass']
   AssertEqual 11, vim_ai_autocomplete#ComputeTextOverlapLength(lines, "):\n    pass")
 
-Execute (UN-041 ComputeTextOverlapLength: sobreposicao parcial multi-linha):
+Execute (UN-041 ComputeTextOverlapLength: partial multi-line overlap):
   let lines = ['return x', '}']
   AssertEqual 1, vim_ai_autocomplete#ComputeTextOverlapLength(lines, "}\nmore code after")
 
-Execute (UN-042 ComputeTextOverlapLength: lista ou texto de depois vazios -> 0):
+Execute (UN-042 ComputeTextOverlapLength: an empty list or empty after-text -> 0):
   AssertEqual 0, vim_ai_autocomplete#ComputeTextOverlapLength(['a', 'b'], '')
   AssertEqual 0, vim_ai_autocomplete#ComputeTextOverlapLength([], ')')
 
-Execute (UN-043 SplitLinesAtCursor: corta a linha atual na coluna do cursor, nao manda ela inteira pros dois lados):
-  let [before, after] = vim_ai_autocomplete#SplitLinesAtCursor(['linha anterior'], 'def soma()', 10, ['linha seguinte'])
-  AssertEqual ['linha anterior', 'def soma('], before
-  AssertEqual [')', 'linha seguinte'], after
+Execute (UN-043 SplitLinesAtCursor: splits the current line at the cursor column, never sending it whole to both sides):
+  let [before, after] = vim_ai_autocomplete#SplitLinesAtCursor(['previous line'], 'def sum()', 9, ['next line'])
+  AssertEqual ['previous line', 'def sum('], before
+  AssertEqual [')', 'next line'], after
 
-Execute (UN-044 SplitLinesAtCursor: cursor na coluna 1 (inicio da linha)):
+Execute (UN-044 SplitLinesAtCursor: cursor at column 1 (start of the line)):
   let [before, after] = vim_ai_autocomplete#SplitLinesAtCursor([], 'foo', 1, [])
   AssertEqual [''], before
   AssertEqual ['foo'], after
 
-Execute (UN-045 SplitLinesAtCursor: cursor apos o ultimo caractere (fim da linha)):
+Execute (UN-045 SplitLinesAtCursor: cursor past the last character (end of the line)):
   let [before, after] = vim_ai_autocomplete#SplitLinesAtCursor([], 'foo', 4, [])
   AssertEqual ['foo'], before
   AssertEqual [''], after
 
-Execute (UN-046 CountRedundantAfterChars: sugestao fecha o parenteses aberto antes -> ")" real fica redundante):
-  AssertEqual 1, vim_ai_autocomplete#CountRedundantAfterChars('def soma(', "a, b):\n    return a + b", ')')
+Execute (UN-046 CountRedundantAfterChars: the suggestion closes the parenthesis opened before it -> the real ")" becomes redundant):
+  AssertEqual 1, vim_ai_autocomplete#CountRedundantAfterChars('def sum(', "a, b):\n    return a + b", ')')
 
-Execute (UN-047 CountRedundantAfterChars: sugestao nao fecha nada aberto antes -> nada redundante):
+Execute (UN-047 CountRedundantAfterChars: the suggestion closes nothing opened before it -> nothing redundant):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('foo', 'bar', ')')
 
-Execute (UN-048 CountRedundantAfterChars: "depois" nao comeca com fechamento -> nao arrisca, retorna 0):
-  AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('def soma(', 'a, b)', 'algo_que_nao_e_fechamento')
+Execute (UN-048 CountRedundantAfterChars: "after" does not start with a closer -> plays it safe, returns 0):
+  AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('def sum(', 'a, b)', 'not_a_closer')
 
-Execute (UN-049 CountRedundantAfterChars: multiplos niveis fechados pela sugestao):
+Execute (UN-049 CountRedundantAfterChars: several levels closed by the suggestion):
   AssertEqual 2, vim_ai_autocomplete#CountRedundantAfterChars('foo([', '])', '])')
 
-Execute (UN-050 CountRedundantAfterChars: sugestao abre e fecha o proprio parenteses -> nao mexe no que ja existia antes):
+Execute (UN-050 CountRedundantAfterChars: the suggestion opens and closes its own parenthesis -> leaves what already existed alone):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('foo(', 'bar(1, 2)', ')')
 
 " UN-051 a UN-054: CountRedundantAfterChars com aspas (g:AutoPairs tambem
 " fecha ' " ` -- simetricas, alternam em vez de empilhar tipo diferente).
 
-Execute (UN-051 CountRedundantAfterChars: sugestao fecha a aspa dupla aberta antes -> aspa real fica redundante):
+Execute (UN-051 CountRedundantAfterChars: the suggestion closes the double quote opened before it -> the real quote becomes redundant):
   AssertEqual 1, vim_ai_autocomplete#CountRedundantAfterChars('name = "', 'John"', '"')
 
-Execute (UN-052 CountRedundantAfterChars: sugestao fecha a aspa simples aberta antes):
+Execute (UN-052 CountRedundantAfterChars: the suggestion closes the single quote opened before it):
   AssertEqual 1, vim_ai_autocomplete#CountRedundantAfterChars("name = '", "John'", "'")
 
-Execute (UN-053 CountRedundantAfterChars: mistura parenteses e aspas -- print("|") com sugestao que fecha os dois):
+Execute (UN-053 CountRedundantAfterChars: mixes parentheses and quotes -- print("|") with a suggestion closing both):
   AssertEqual 2, vim_ai_autocomplete#CountRedundantAfterChars('print("', 'ola")', '")')
 
-Execute (UN-054 CountRedundantAfterChars: aspa dentro da sugestao que NAO fecha nada aberto antes -> nao mexe):
+Execute (UN-054 CountRedundantAfterChars: a quote inside the suggestion that closes NOTHING opened before -> leaves it alone):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('foo(', '"bar"', ')')
 
 " UN-055 a UN-058: cursor ANTES do proprio abre-parenteses (nao dentro do
@@ -488,14 +488,14 @@ Execute (UN-054 CountRedundantAfterChars: aspa dentro da sugestao que NAO fecha 
 " mecanismos ja existentes): "def quicksort" + sugestao "(arr):" + "()"
 " intacto = "def quicksort(arr):()" -- par vazio original sobra no final.
 
-Execute (UN-055 CountRedundantAfterChars: cursor antes do abre-parenteses, sugestao escreve o proprio par -> par vazio original fica redundante):
+Execute (UN-055 CountRedundantAfterChars: cursor before the opening bracket, suggestion writes its own pair -> the original empty pair becomes redundant):
   AssertEqual 2, vim_ai_autocomplete#CountRedundantAfterChars('def quicksort', '(arr):', '()')
 
-Execute (UN-056 CountRedundantAfterChars: mesmo caso com colchete):
+Execute (UN-056 CountRedundantAfterChars: same case with a square bracket):
   AssertEqual 2, vim_ai_autocomplete#CountRedundantAfterChars('items', '[x, y]', '[]')
 
-Execute (UN-057 CountRedundantAfterChars: "depois" nao e um par vazio de verdade (tem conteudo entre os dois) -> nao mexe):
+Execute (UN-057 CountRedundantAfterChars: "after" is not really an empty pair (there is content between the two) -> leaves it alone):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('def quicksort', '(arr):', '(x)')
 
-Execute (UN-058 CountRedundantAfterChars: sugestao nao usa esse tipo de bracket -> nao arrisca, retorna 0):
+Execute (UN-058 CountRedundantAfterChars: the suggestion does not use that kind of bracket -> plays it safe, returns 0):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('def quicksort', 'pass', '()')
