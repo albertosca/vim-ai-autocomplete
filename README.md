@@ -92,7 +92,7 @@ If you configure nothing, it defaults to one Gemini and one Claude model. A mode
 | Key | Action |
 |---|---|
 | `Tab` | Accept the visible suggestion (falls through to your original `Tab` mapping otherwise) |
-| `Esc` | Dismiss the visible suggestion (falls through to your original `Esc` mapping otherwise) |
+| `<C-]>` | Dismiss the visible suggestion without leaving insert mode |
 | `,pt` | Toggle auto-trigger on/off |
 | `,pr` | Cycle to the next active model (only registered with 2+ active models) |
 | `,pm` | Pick a model via `vim.ui.select` (Neovim only, only registered with 2+ active models) |

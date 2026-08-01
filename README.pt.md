@@ -92,7 +92,7 @@ Se você não configurar nada, o default é um modelo Gemini e um Claude. Um mod
 | Tecla | Ação |
 |---|---|
 | `Tab` | Aceita a sugestão visível (cai pro seu mapping original de `Tab` caso contrário) |
-| `Esc` | Descarta a sugestão visível (cai pro seu mapping original de `Esc` caso contrário) |
+| `<C-]>` | Descarta a sugestão visível sem sair do insert mode |
 | `,pt` | Liga/desliga o auto-trigger |
 | `,pr` | Cicla pro próximo modelo ativo (só registrado com 2+ modelos ativos) |
 | `,pm` | Escolhe um modelo via `vim.ui.select` (só Neovim, só registrado com 2+ modelos ativos) |
