@@ -52,6 +52,22 @@ describe("vim-ai-autocomplete.family.parse_claude_response", function()
   end)
 end)
 
+describe("vim-ai-autocomplete.family.parse_deepseek_response", function()
+  it("extracts the text from the response (OpenAI-compatible choices/message/content)", function()
+    local body = vim.json.encode({ choices = { { message = { content = 'ola\nmundo' } } } })
+    assert.are.same({ 'ola', 'mundo' }, family.parse_deepseek_response(body))
+  end)
+
+  it("response with no choices -> empty list", function()
+    assert.are.same({}, family.parse_deepseek_response('{}'))
+  end)
+
+  it("choice with no message/content -> empty list, no error", function()
+    local body = vim.json.encode({ choices = { { finish_reason = 'content_filter' } } })
+    assert.are.same({}, family.parse_deepseek_response(body))
+  end)
+end)
+
 describe("vim-ai-autocomplete.family.family_handler", function()
   it("gemini: build_command builds the right curl", function()
     local handler = family.family_handler('gemini')
@@ -65,6 +81,23 @@ describe("vim-ai-autocomplete.family.family_handler", function()
     local handler = family.family_handler('anthropic')
     local cmd = handler.build_command({ before = 'a', after = 'b' }, 'claude-sonnet-5', 'KEY')
     assert.is_not_nil(string.find(table.concat(cmd, ' '), 'x%-api%-key: KEY'))
+  end)
+
+  it("deepseek: build_command builds the right curl (OpenAI-compatible, Bearer auth)", function()
+    local handler = family.family_handler('deepseek')
+    local cmd = handler.build_command({ before = 'def foo(', after = ')' }, 'deepseek-v4-flash', 'KEY')
+    assert.are.equal('curl', cmd[1])
+    local joined = table.concat(cmd, ' ')
+    assert.is_not_nil(string.find(joined, 'https://api%.deepseek%.com/chat/completions'))
+    assert.is_not_nil(string.find(joined, 'Authorization: Bearer KEY'))
+    local d_idx
+    for i, v in ipairs(cmd) do
+      if v == '-d' then d_idx = i + 1 end
+    end
+    local decoded = vim.json.decode(cmd[d_idx])
+    assert.are.equal('deepseek-v4-flash', decoded.model)
+    assert.are.equal('user', decoded.messages[1].role)
+    assert.is_not_nil(string.find(decoded.messages[1].content, 'def foo%('))
   end)
 
   it("unknown family: errors", function()

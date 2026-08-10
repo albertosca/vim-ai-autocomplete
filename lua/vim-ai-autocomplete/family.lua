@@ -45,6 +45,40 @@ function M.build_claude_command(context, model, api_key)
   }
 end
 
+-- DeepSeek's API is OpenAI-compatible chat completions: POST
+-- https://api.deepseek.com/chat/completions, `Authorization: Bearer <key>`,
+-- body {model, messages: [{role, content}]}. Confirmed against the official
+-- docs (api-docs.deepseek.com) on 2026-08-10, not assumed from memory.
+function M.build_deepseek_request(context, model)
+  local prompt = string.format(PROMPT_TEMPLATE, context.before, context.after)
+  return vim.json.encode({ model = model, messages = { { role = 'user', content = prompt } } })
+end
+
+function M.build_deepseek_command(context, model_id, api_key)
+  local body = M.build_deepseek_request(context, model_id)
+  return {
+    'curl', '-s', '-X', 'POST', 'https://api.deepseek.com/chat/completions',
+    '-H', 'Authorization: Bearer ' .. api_key,
+    '-H', 'Content-Type: application/json', '-d', body,
+  }
+end
+
+-- Same defensive shape as parse_gemini_response: a malformed/blocked
+-- response is a legitimate possibility (rate limit, content filter), not an
+-- error to crash on -- guard every level instead of indexing straight
+-- through choices[1].message.content.
+function M.parse_deepseek_response(body)
+  local ok, data = pcall(vim.json.decode, body)
+  if not ok or type(data) ~= 'table' or type(data.choices) ~= 'table' or #data.choices == 0 then
+    return {}
+  end
+  local message = data.choices[1].message
+  if type(message) ~= 'table' or type(message.content) ~= 'string' then
+    return {}
+  end
+  return vim.split(message.content, '\n', { plain = true, trimempty = false })
+end
+
 -- A blocked candidate (safety filter, finishReason SAFETY/RECITATION) comes
 -- back WITHOUT "content", or without "parts" -- a legitimate HTTP 200
 -- response, just with no actual suggestion. Real finding, reported from a
@@ -85,6 +119,7 @@ function M.family_handler(family_name)
   local handlers = {
     gemini = { build_command = M.build_gemini_command, parse_response = M.parse_gemini_response },
     anthropic = { build_command = M.build_claude_command, parse_response = M.parse_claude_response },
+    deepseek = { build_command = M.build_deepseek_command, parse_response = M.parse_deepseek_response },
   }
   local handler = handlers[family_name]
   if not handler then

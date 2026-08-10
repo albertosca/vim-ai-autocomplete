@@ -346,6 +346,36 @@ Execute (UN-021 FamilyHandler: the "anthropic" family returns BuildClaudeCommand
   AssertEqual function('vim_ai_autocomplete#BuildClaudeCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseClaudeResponse'), handler.parse_response
 
+" UN-021a to UN-021c: deepseek family -- OpenAI-compatible chat completions
+" (POST https://api.deepseek.com/chat/completions, Authorization: Bearer,
+" body {model, messages: [{role: 'user', content}]}, response
+" choices[0].message.content). Confirmed against the official docs
+" (api-docs.deepseek.com) on 2026-08-10, not assumed from memory.
+
+Execute (UN-021a BuildDeepseekCommand: correct endpoint, auth header and body):
+  let ctx = {'before': 'def foo(', 'after': ')'}
+  let result = vim_ai_autocomplete#BuildDeepseekCommand(ctx, 'deepseek-v4-flash', 'sk-fake123')
+  AssertEqual 'curl', result[0]
+  Assert index(result, 'https://api.deepseek.com/chat/completions') >= 0
+  Assert index(result, 'Authorization: Bearer sk-fake123') >= 0
+  let body_idx = index(result, '-d') + 1
+  let decoded = json_decode(result[body_idx])
+  AssertEqual 'deepseek-v4-flash', decoded.model
+  AssertEqual 'user', decoded.messages[0].role
+  Assert decoded.messages[0].content =~# 'def foo(', 'the body should contain the context'
+
+Execute (UN-021b ParseDeepseekResponse: extracts the text from an OpenAI-compatible response):
+  let body = json_encode({'choices': [{'message': {'content': "x\ny"}}]})
+  AssertEqual ['x', 'y'], vim_ai_autocomplete#ParseDeepseekResponse(body)
+
+Execute (UN-021c ParseDeepseekResponse: response with no choices -> empty list, no error):
+  AssertEqual [], vim_ai_autocomplete#ParseDeepseekResponse('{}')
+
+Execute (UN-021d FamilyHandler: the "deepseek" family returns BuildDeepseekCommand + ParseDeepseekResponse):
+  let handler = vim_ai_autocomplete#FamilyHandler('deepseek')
+  AssertEqual function('vim_ai_autocomplete#BuildDeepseekCommand'), handler.build_command
+  AssertEqual function('vim_ai_autocomplete#ParseDeepseekResponse'), handler.parse_response
+
 Execute (UN-022 FamilyHandler: unknown family -> throws a clear exception):
   let threw = 0
   try

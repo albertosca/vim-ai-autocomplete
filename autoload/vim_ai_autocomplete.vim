@@ -126,6 +126,15 @@ function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
   return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
 endfunction
 
+" DeepSeek's API is OpenAI-compatible chat completions: no "max_tokens"
+" requirement, just {model, messages: [{role, content}]}. Confirmed against
+" the official docs (api-docs.deepseek.com) on 2026-08-10, not assumed from
+" memory.
+function! vim_ai_autocomplete#BuildDeepseekRequest(context, model) abort
+  let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
+  return json_encode({'model': a:model, 'messages': [{'role': 'user', 'content': prompt}]})
+endfunction
+
 " Finds the longest overlap between the END of the suggestion and the START
 " of the "after" text (whatever is left once the structural redundancy from
 " CountRedundantAfterChars() has been accounted for -- see s:OnExit). It only
@@ -312,6 +321,13 @@ function! vim_ai_autocomplete#BuildGeminiCommand(context, model_id, api_key) abo
   return ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
 endfunction
 
+function! vim_ai_autocomplete#BuildDeepseekCommand(context, model_id, api_key) abort
+  let body = vim_ai_autocomplete#BuildDeepseekRequest(a:context, a:model_id)
+  return ['curl', '-s', '-X', 'POST', 'https://api.deepseek.com/chat/completions',
+        \ '-H', 'Authorization: Bearer ' . a:api_key,
+        \ '-H', 'Content-Type: application/json', '-d', body]
+endfunction
+
 " Every API family implements two operations with a uniform signature:
 " build_command(context, model_id, api_key) -> list for job_start
 " parse_response(body) -> list of suggestion lines
@@ -336,6 +352,7 @@ function! vim_ai_autocomplete#FamilyHandler(family) abort
   let handlers = {
         \ 'gemini': {'build_command': function('vim_ai_autocomplete#BuildGeminiCommand'), 'parse_response': function('vim_ai_autocomplete#ParseGeminiResponse')},
         \ 'anthropic': {'build_command': function('vim_ai_autocomplete#BuildClaudeCommand'), 'parse_response': function('vim_ai_autocomplete#ParseClaudeResponse')},
+        \ 'deepseek': {'build_command': function('vim_ai_autocomplete#BuildDeepseekCommand'), 'parse_response': function('vim_ai_autocomplete#ParseDeepseekResponse')},
         \ }
   if !has_key(handlers, a:family)
     throw 'vim-ai-autocomplete: unknown family "' . a:family . '"'
@@ -393,6 +410,26 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   endif
   let text = data.content[0].text
   return split(text, "\n", 1)
+endfunction
+
+" Same defensive shape as ParseGeminiResponse: a malformed/blocked response
+" is a legitimate possibility (rate limit, content filter), not an error to
+" crash on -- guard every level instead of indexing straight through
+" choices[0].message.content.
+function! vim_ai_autocomplete#ParseDeepseekResponse(body) abort
+  try
+    let data = json_decode(a:body)
+  catch
+    return []
+  endtry
+  if type(data) != v:t_dict || !has_key(data, 'choices') || empty(data.choices)
+    return []
+  endif
+  let message = get(data.choices[0], 'message', v:null)
+  if type(message) != v:t_dict || type(get(message, 'content', v:null)) != v:t_string
+    return []
+  endif
+  return split(message.content, "\n", 1)
 endfunction
 
 " Some models (confirmed with gemini-3.1-flash-lite, reproducible 3/3
