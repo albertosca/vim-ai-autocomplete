@@ -67,6 +67,71 @@ describe("vim-ai-autocomplete.context.treesitter_scope_start_line", function()
     assert.are.equal(3, start_line)
   end)
 
+  -- tree-sitter-ruby names the nodes `method`/`class`, NOT
+  -- `method_definition`/`class_definition` -- confirmed live on 2026-08-13:
+  -- cursor inside `def bar` gives `binary <- body_statement <- method <-
+  -- body_statement <- class <- program`. The old list silently never matched,
+  -- so Ruby always fell back to the naive line cut.
+  it("finds the first line of the method containing the cursor (Ruby)", function()
+    vim.bo[buf].filetype = 'ruby'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      'class Foo',
+      '  def bar(x)',
+      '    x + 1',
+      '  end',
+      'end',
+    })
+    vim.api.nvim_set_current_buf(buf)
+    local ok, added = pcall(vim.treesitter.language.add, 'ruby')
+    if not ok or not added then
+      pending('parser ruby indisponivel neste ambiente de teste')
+      return
+    end
+    local start_line = context.treesitter_scope_start_line(buf, 3, 5) -- inside bar()
+    assert.are.equal(2, start_line)
+  end)
+
+  -- Elixir's grammar has no function_definition node at all: def/defmodule
+  -- parse as a generic `call` node whose first child is the `def`/`defmodule`
+  -- identifier -- confirmed live on 2026-08-13: cursor inside `def bar` gives
+  -- `binary_operator <- do_block <- call <- do_block <- call <- source`. A
+  -- plain call like Enum.map(...) must NOT count as a scope.
+  it("finds the first line of the def containing the cursor (Elixir)", function()
+    vim.bo[buf].filetype = 'elixir'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      'defmodule Foo do',
+      '  def bar(x) do',
+      '    x + 1',
+      '  end',
+      'end',
+    })
+    vim.api.nvim_set_current_buf(buf)
+    local ok, added = pcall(vim.treesitter.language.add, 'elixir')
+    if not ok or not added then
+      pending('parser elixir indisponivel neste ambiente de teste')
+      return
+    end
+    local start_line = context.treesitter_scope_start_line(buf, 3, 5) -- inside bar()
+    assert.are.equal(2, start_line)
+  end)
+
+  it("a plain Elixir call (Enum.map) does NOT count as a scope", function()
+    vim.bo[buf].filetype = 'elixir'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      'Enum.map([1, 2], fn x ->',
+      '  x + 1',
+      'end)',
+    })
+    vim.api.nvim_set_current_buf(buf)
+    local ok, added = pcall(vim.treesitter.language.add, 'elixir')
+    if not ok or not added then
+      pending('parser elixir indisponivel neste ambiente de teste')
+      return
+    end
+    -- no def/defp/defmodule anywhere -> no scope, naive fallback (nil)
+    assert.is_nil(context.treesitter_scope_start_line(buf, 2, 3))
+  end)
+
   it("no parser available for the filetype -> nil (falls back to the line-based cut)", function()
     vim.bo[buf].filetype = 'no-such-language'
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'qualquer coisa' })

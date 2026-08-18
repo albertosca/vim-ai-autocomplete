@@ -36,6 +36,12 @@ end
 -- covers the most common cases across the Treesitter grammars used in this
 -- setup (Python, JS/TS, Ruby, Go, Elixir). The list is deliberately small: a
 -- language missing from it simply falls back (never an error).
+--
+-- Each name was verified against the real grammar, not assumed -- the list
+-- originally claimed Ruby/Elixir coverage with node names that never existed
+-- in those grammars (tree-sitter-ruby uses `method`/`class`, not
+-- `method_definition`/`class_definition`), so both silently always fell back
+-- to the naive line cut.
 local SCOPE_NODE_TYPES = {
   function_definition = true,
   function_declaration = true,
@@ -43,8 +49,32 @@ local SCOPE_NODE_TYPES = {
   class_definition = true,
   class_declaration = true,
   arrow_function = true,
+  method = true, -- Ruby
+  class = true, -- Ruby
   module = false, -- never use the whole file as a "scope"
 }
+
+-- Elixir has no function_definition node at all: def/defp/defmodule parse as
+-- a generic `call` node whose FIRST CHILD is the def/defp/defmodule
+-- identifier (verified live: `binary_operator <- do_block <- call <- ...`).
+-- A plain call like Enum.map(...) must NOT count as a scope, hence the
+-- first-child check instead of accepting every `call`.
+local ELIXIR_DEF_CALLS = { def = true, defp = true, defmodule = true }
+
+local function is_scope_node(node, bufnr)
+  local node_type = node:type()
+  if SCOPE_NODE_TYPES[node_type] then
+    return true
+  end
+  if node_type == 'call' then
+    local first_child = node:child(0)
+    if first_child and first_child:type() == 'identifier' then
+      local ok, text = pcall(vim.treesitter.get_node_text, first_child, bufnr)
+      return ok and ELIXIR_DEF_CALLS[text] or false
+    end
+  end
+  return false
+end
 
 -- Instead of blindly cutting ~100 lines before the cursor, find the
 -- function/class node containing the cursor through Treesitter and use the
@@ -66,7 +96,7 @@ function M.treesitter_scope_start_line(bufnr, lnum, col)
     return nil
   end
   local scope = node
-  while scope and not SCOPE_NODE_TYPES[scope:type()] do
+  while scope and not is_scope_node(scope, bufnr) do
     scope = scope:parent()
   end
   if not scope then
