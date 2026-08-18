@@ -134,8 +134,9 @@ describe("vim-ai-autocomplete.keymaps.setup_provider_toggle", function()
   end)
 
   it("with only 1 active model, does not register ,pr", function()
-    vim.keymap.del('n', '<leader>pr', { buffer = false })
-    local ok = pcall(vim.keymap.del, 'n', '<leader>pr')
+    -- clear any mapping left over from the previous case; pcall because it
+    -- may legitimately not exist
+    pcall(vim.keymap.del, 'n', '<leader>pr')
     keymaps.setup_provider_toggle({ { name = 'a' } })
     local map = vim.fn.maparg('<leader>pr', 'n', false, true)
     assert.are.equal('', map.lhs or '')

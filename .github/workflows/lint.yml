@@ -1,0 +1,24 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install luacheck and vint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luarocks python3-pip
+          sudo luarocks install luacheck
+          pip3 install vim-vint
+
+      - name: luacheck (Lua side)
+        run: luacheck lua/ test/nvim/
+
+      - name: vint (Vimscript side)
+        run: vint autoload/ plugin/

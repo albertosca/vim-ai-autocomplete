@@ -1,10 +1,23 @@
 # vim-ai-autocomplete
 
-[Read in English](README.md)
+🇺🇸 [English](README.md) · 🇧🇷 [Português](README.pt.md)
+
+[![test](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/test.yml/badge.svg)](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/test.yml)
+[![lint](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/lint.yml/badge.svg)](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/lint.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Vim 9+](https://img.shields.io/badge/Vim-9%2B-019733?logo=vim&logoColor=white)
+![Neovim](https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&logoColor=white)
 
 Autocomplete de IA via ghost-text para Vim 9+ e Neovim, com round-robin plugável de múltiplos modelos (Gemini, Claude, ou qualquer modelo que você configurar).
 
 ![demo: sugestão ghost-text aparecendo e sendo aceita com Tab](demo.gif)
+
+## Por baixo do capô
+
+- **Duas implementações nativas em paridade de comportamento** — Vimscript puro (textprops do Vim 9) e Lua puro (extmarks do Neovim), sem camada de compatibilidade, cada uma idiomática ao seu editor.
+- **188 testes, sem precisar de rede** — 96 vader (Vim) + 92 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
+- **Prompt FIM com detecção de redundância** — o modelo sabe o que existe depois do cursor, e qualquer coisa que ele repita (um fecha-parênteses que o auto-pairs já inseriu, um sufixo duplicado) é detectada estruturalmente, exibida riscada, e descartada ao aceitar — nunca silenciosamente.
+- **Falha suave** — resposta malformada, candidate bloqueado por filtro e erro de billing viram um aviso único, nunca stack trace no meio da digitação.
 
 ## Instalação
 
@@ -121,3 +134,7 @@ Roda a suite completa (vader pro lado Vim, plenary pro lado Neovim) — veja o [
 ## Licença
 
 MIT — veja [LICENSE](LICENSE).
+
+## Autor
+
+[Alberto de Sá Cavalcanti de Albuquerque](https://github.com/albertosca) — [LinkedIn](https://www.linkedin.com/in/albertosca/)

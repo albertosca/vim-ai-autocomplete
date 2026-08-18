@@ -1,10 +1,23 @@
 # vim-ai-autocomplete
 
-[Leia em português](README.pt.md)
+🇺🇸 [English](README.md) · 🇧🇷 [Português](README.pt.md)
+
+[![test](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/test.yml/badge.svg)](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/test.yml)
+[![lint](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/lint.yml/badge.svg)](https://github.com/albertosca/vim-ai-autocomplete/actions/workflows/lint.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Vim 9+](https://img.shields.io/badge/Vim-9%2B-019733?logo=vim&logoColor=white)
+![Neovim](https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&logoColor=white)
 
 Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model round-robin (Gemini, Claude, or any model you configure).
 
 ![demo: ghost-text suggestion appearing and being accepted with Tab](demo.gif)
+
+## Under the hood
+
+- **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
+- **188 tests, no network required** — 96 vader (Vim) + 92 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
+- **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
 ## Installation
 
@@ -121,3 +134,7 @@ Runs the full suite (vader for the Vim side, plenary for the Neovim side) — se
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Author
+
+[Alberto de Sá Cavalcanti de Albuquerque](https://github.com/albertosca) — [LinkedIn](https://www.linkedin.com/in/albertosca/)
