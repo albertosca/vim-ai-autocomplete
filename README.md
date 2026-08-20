@@ -94,7 +94,7 @@ require('vim-ai-autocomplete').setup({
 | Field | Meaning |
 |---|---|
 | `name` | Whatever you want to call this model in `,pr`/`,pm`/`:VimAiAutocompleteModel` |
-| `family` | `'gemini'` or `'anthropic'` — determines the request/response shape |
+| `family` | `'gemini'`, `'anthropic'` or `'deepseek'` — determines the request/response shape |
 | `model_id` | The real model ID sent to the provider's API |
 | `api_key_env` | Name of the environment variable holding that provider's API key |
 
