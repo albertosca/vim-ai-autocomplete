@@ -378,6 +378,25 @@ Execute (UN-010b ParseClaudeResponse: content with only thinking blocks -> empty
   let body = json_encode({'content': [{'type': 'thinking', 'thinking': ''}]})
   AssertEqual [], vim_ai_autocomplete#ParseClaudeResponse(body)
 
+" U+FFFD reached a real buffer via Tab-accept (field report 2026-08-25, ga
+" showed 65533/Hex fffd, three in a row). The local pipeline was exonerated
+" by experiment (clean raw bodies over 15 real calls; json_decode handles
+" emoji; a multibyte char split across raw job chunks reassembles
+" byte-perfectly) -- the junk arrives from upstream, intermittently. U+FFFD
+" is never legitimate code: every parser strips it.
+Execute (UN-060 all three parsers strip U+FFFD from suggestions):
+  " nr2char, never a literal/byte-escaped char here: this test file went
+  " through one generator that interpreted the escapes early and the raw
+  " bytes then got latin1-mangled into 3 chars -- invisible in review, red
+  " in CI. nr2char(0xFFFD) is encoding-proof.
+  let fffd = nr2char(0xFFFD)
+  let gem = json_encode({'candidates': [{'content': {'parts': [{'text': 'a' . fffd . 'b'}]}}]})
+  AssertEqual ['ab'], vim_ai_autocomplete#ParseGeminiResponse(gem)
+  let cla = json_encode({'content': [{'type': 'text', 'text': 'x' . fffd . fffd . 'y'}]})
+  AssertEqual ['xy'], vim_ai_autocomplete#ParseClaudeResponse(cla)
+  let dsk = json_encode({'choices': [{'message': {'content': 'q' . fffd . 'w'}}]})
+  AssertEqual ['qw'], vim_ai_autocomplete#ParseDeepseekResponse(dsk)
+
 Execute (UN-021b ParseDeepseekResponse: extracts the text from an OpenAI-compatible response):
   let body = json_encode({'choices': [{'message': {'content': "x\ny"}}]})
   AssertEqual ['x', 'y'], vim_ai_autocomplete#ParseDeepseekResponse(body)

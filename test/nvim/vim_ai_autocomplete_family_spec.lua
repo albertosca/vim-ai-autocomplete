@@ -41,6 +41,30 @@ describe("vim-ai-autocomplete.family.parse_gemini_response", function()
   end)
 end)
 
+describe("vim-ai-autocomplete.family sanitization", function()
+  -- U+FFFD (the "diamond with a question mark") reached a real buffer via
+  -- Tab-accept (field report 2026-08-25, ga showed 65533/Hex fffd, three in
+  -- a row). The whole local pipeline was exonerated by experiment -- raw
+  -- bodies clean over 15 real calls, json_decode handles emoji (literal and
+  -- escaped), and a multibyte char split across job chunks reassembles
+  -- byte-perfectly -- so the junk arrives from upstream, intermittently.
+  -- U+FFFD is never legitimate code: strip it in every parser.
+  it("strips U+FFFD from gemini suggestions", function()
+    local body = vim.json.encode({ candidates = { { content = { parts = { { text = 'a\239\191\189b\239\191\189\239\191\189' } } } } } })
+    assert.are.same({ 'ab' }, family.parse_gemini_response(body))
+  end)
+
+  it("strips U+FFFD from claude suggestions", function()
+    local body = vim.json.encode({ content = { { type = 'text', text = 'x\239\191\189y' } } })
+    assert.are.same({ 'xy' }, family.parse_claude_response(body))
+  end)
+
+  it("strips U+FFFD from deepseek suggestions", function()
+    local body = vim.json.encode({ choices = { { message = { content = 'q\239\191\189w' } } } })
+    assert.are.same({ 'qw' }, family.parse_deepseek_response(body))
+  end)
+end)
+
 describe("vim-ai-autocomplete.family.parse_claude_response", function()
   it("extracts the text from the response", function()
     local body = vim.json.encode({ content = { { text = 'x\ny' } } })

@@ -71,6 +71,16 @@ function M.build_deepseek_command(context, model_id, api_key)
   }
 end
 
+-- U+FFFD (EF BF BD) is never legitimate code, but it intermittently reached
+-- a real buffer (field report 2026-08-25: ga showed 65533, three in a row).
+-- The local pipeline was exonerated by experiment -- clean raw bodies over 15
+-- real calls, json_decode handles emoji, and a multibyte char split across
+-- job chunks reassembles byte-perfectly -- so it arrives from upstream:
+-- strip it before it can be displayed or accepted.
+local function strip_replacement_chars(text)
+  return (text:gsub('\239\191\189', ''))
+end
+
 -- Same defensive shape as parse_gemini_response: a malformed/blocked
 -- response is a legitimate possibility (rate limit, content filter), not an
 -- error to crash on -- guard every level instead of indexing straight
@@ -84,7 +94,7 @@ function M.parse_deepseek_response(body)
   if type(message) ~= 'table' or type(message.content) ~= 'string' then
     return {}
   end
-  return vim.split(message.content, '\n', { plain = true, trimempty = false })
+  return vim.split(strip_replacement_chars(message.content), '\n', { plain = true, trimempty = false })
 end
 
 -- A blocked candidate (safety filter, finishReason SAFETY/RECITATION) comes
@@ -106,7 +116,7 @@ function M.parse_gemini_response(body)
     return {}
   end
   local text = parts[1].text
-  return vim.split(text, '\n', { plain = true, trimempty = false })
+  return vim.split(strip_replacement_chars(text), '\n', { plain = true, trimempty = false })
 end
 
 -- content is a LIST of typed blocks, and the text block is not necessarily
@@ -120,7 +130,7 @@ function M.parse_claude_response(body)
   end
   for _, block in ipairs(data.content) do
     if type(block) == 'table' and type(block.text) == 'string' then
-      return vim.split(block.text, '\n', { plain = true, trimempty = false })
+      return vim.split(strip_replacement_chars(block.text), '\n', { plain = true, trimempty = false })
     end
   end
   return {}

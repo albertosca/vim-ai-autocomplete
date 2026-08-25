@@ -378,6 +378,16 @@ function! vim_ai_autocomplete#ExtractApiErrorMessage(raw_output) abort
   return ''
 endfunction
 
+" U+FFFD (EF BF BD) is never legitimate code, but it intermittently reached
+" a real buffer (field report 2026-08-25: ga showed 65533, three in a row).
+" The local pipeline was exonerated by experiment -- clean raw bodies over 15
+" real calls, json_decode handles emoji, and a multibyte char split across
+" raw job chunks reassembles byte-perfectly -- so it arrives from upstream:
+" strip it before it can be displayed or accepted.
+function! s:StripReplacementChars(text) abort
+  return substitute(a:text, "\xef\xbf\xbd", '', 'g')
+endfunction
+
 " A blocked candidate (safety filter, finishReason SAFETY/RECITATION)
 " comes back WITHOUT "content", or without "parts" -- a legitimate HTTP 200
 " response, just with no actual suggestion. Real finding, reported from a
@@ -400,7 +410,7 @@ function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
     return []
   endif
   let text = parts[0].text
-  return split(text, "\n", 1)
+  return split(s:StripReplacementChars(text), "\n", 1)
 endfunction
 
 " content is a LIST of typed blocks, and the text block is not necessarily
@@ -418,7 +428,7 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   endif
   for block in data.content
     if type(block) == v:t_dict && type(get(block, 'text', v:null)) == v:t_string
-      return split(block.text, "\n", 1)
+      return split(s:StripReplacementChars(block.text), "\n", 1)
     endif
   endfor
   return []
@@ -441,7 +451,7 @@ function! vim_ai_autocomplete#ParseDeepseekResponse(body) abort
   if type(message) != v:t_dict || type(get(message, 'content', v:null)) != v:t_string
     return []
   endif
-  return split(message.content, "\n", 1)
+  return split(s:StripReplacementChars(message.content), "\n", 1)
 endfunction
 
 " Some models (confirmed with gemini-3.1-flash-lite, reproducible 3/3
