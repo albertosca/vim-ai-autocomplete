@@ -655,8 +655,29 @@ function! vim_ai_autocomplete#SetupProviderToggle(active_models) abort
     " (nvim/lua/user/venv.lua) -- the same key is chosen on both sides for
     " consistency, so it has to be free on both.
     nnoremap <silent> <leader>pr :call vim_ai_autocomplete#ToggleProvider()<CR>
+    nnoremap <silent> <leader>pm :call vim_ai_autocomplete#OpenModelPicker()<CR>
     command! -nargs=1 -complete=customlist,vim_ai_autocomplete#CompleteModelNames VimAiAutocompleteModel call vim_ai_autocomplete#SelectModel(<q-args>)
   endif
+endfunction
+
+" ,pm parity with the Neovim side (which uses vim.ui.select): a popup_menu
+" of the active model names. The selection logic lives in OnModelPicked so
+" it is testable without a real popup -- popup_menu passes (id, result)
+" where result is the 1-based index, or -1 on cancel.
+function! vim_ai_autocomplete#OpenModelPicker() abort
+  let active = vim_ai_autocomplete#ActiveModels()
+  let names = map(copy(active), 'v:val.name')
+  call popup_menu(names, {
+        \ 'title': ' vim-ai-autocomplete: pick a model ',
+        \ 'callback': {id, result -> vim_ai_autocomplete#OnModelPicked(names, id, result)},
+        \ })
+endfunction
+
+function! vim_ai_autocomplete#OnModelPicked(names, id, result) abort
+  if a:result < 1 || a:result > len(a:names)
+    return
+  endif
+  call vim_ai_autocomplete#SelectModel(a:names[a:result - 1])
 endfunction
 
 function! vim_ai_autocomplete#ToggleProvider() abort

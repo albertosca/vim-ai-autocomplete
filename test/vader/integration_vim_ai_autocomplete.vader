@@ -237,6 +237,50 @@ Execute (IT-020 SplitDisplayTail: the final accepted text does not change with t
     AssertEqual before, after, 'the trim must not change the final accepted text: ' . string(case)
   endfor
 
+" IT-014a/b: ,pm model picker on the Vim side (parity with Neovim's
+" vim.ui.select picker) -- popup_menu-based, registered only with 2+ active
+" models, exactly like ,pr. OnModelPicked is the popup callback, split out
+" so the selection logic is testable without a real popup.
+
+Execute (IT-014a OnModelPicked: a valid 1-based index selects that model):
+  let g:vim_ai_autocomplete_provider = 'a'
+  let g:vim_ai_autocomplete_models = [
+        \ {'name': 'a', 'family': 'gemini', 'model_id': 'x', 'api_key_env': 'IT014_KEY_A'},
+        \ {'name': 'b', 'family': 'gemini', 'model_id': 'y', 'api_key_env': 'IT014_KEY_B'},
+        \ ]
+  let $IT014_KEY_A = 'a'
+  let $IT014_KEY_B = 'b'
+  call vim_ai_autocomplete#OnModelPicked(['a', 'b'], 0, 2)
+  AssertEqual 'b', g:vim_ai_autocomplete_provider
+After:
+  unlet g:vim_ai_autocomplete_models
+  unlet $IT014_KEY_A
+  unlet $IT014_KEY_B
+
+Execute (IT-014b OnModelPicked: cancel (-1) and out-of-range leave the provider untouched):
+  let g:vim_ai_autocomplete_provider = 'a'
+  call vim_ai_autocomplete#OnModelPicked(['a', 'b'], 0, -1)
+  AssertEqual 'a', g:vim_ai_autocomplete_provider
+  call vim_ai_autocomplete#OnModelPicked(['a', 'b'], 0, 0)
+  AssertEqual 'a', g:vim_ai_autocomplete_provider
+  call vim_ai_autocomplete#OnModelPicked(['a', 'b'], 0, 99)
+  AssertEqual 'a', g:vim_ai_autocomplete_provider
+After:
+  " own empty After so this block does not inherit IT-014a's unlets (Vader
+  " propagates the last After defined to the following blocks)
+
+Execute (IT-014c SetupProviderToggle registers ,pm with 2+ active models, and not with 1):
+  let two_models = vim_ai_autocomplete#DefaultModels()
+  call vim_ai_autocomplete#SetupProviderToggle(two_models)
+  Assert !empty(maparg(',pm', 'n', 0, 1)), ',pm should be registered with 2+ active models'
+  nunmap ,pm
+  nunmap ,pr
+  delcommand VimAiAutocompleteModel
+  call vim_ai_autocomplete#SetupProviderToggle([two_models[0]])
+  AssertEqual {}, maparg(',pm', 'n', 0, 1), ',pm should NOT be registered with only 1 active model'
+After:
+  " own empty After -- see IT-014b
+
 Execute (IT-007 ,pt is registered by the plugin (the same mapping exists on the Neovim side)):
   let map = maparg(',pt', 'n', 0, 1)
   Assert !empty(map), ',pt should be registered (auto-trigger toggle, independent of any API key)'

@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **188 tests, no network required** — 96 vader (Vim) + 92 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **195 tests, no network required** — 101 vader (Vim) + 94 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
@@ -108,7 +108,7 @@ If you configure nothing, it defaults to one Gemini and one Claude model. A mode
 | `<C-]>` | Dismiss the visible suggestion without leaving insert mode |
 | `,pt` | Toggle auto-trigger on/off |
 | `,pr` | Cycle to the next active model (only registered with 2+ active models) |
-| `,pm` | Pick a model via `vim.ui.select` (Neovim only, only registered with 2+ active models) |
+| `,pm` | Pick a model from a menu — `popup_menu` on Vim, `vim.ui.select` on Neovim (only registered with 2+ active models) |
 | `:VimAiAutocompleteModel <name>` | Switch directly to a named model, with completion |
 
 ## Architecture
