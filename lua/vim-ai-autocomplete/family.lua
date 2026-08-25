@@ -51,7 +51,15 @@ end
 -- docs (api-docs.deepseek.com) on 2026-08-10, not assumed from memory.
 function M.build_deepseek_request(context, model)
   local prompt = string.format(PROMPT_TEMPLATE, context.before, context.after)
-  return vim.json.encode({ model = model, messages = { { role = 'user', content = prompt } } })
+  -- thinking must be disabled explicitly: deepseek-v4-flash reasons by
+  -- default, and the reasoning made a completion take 55.6s against 1.6s
+  -- with it off (both measured with real calls, 2026-08-25) -- useless for
+  -- an autocomplete either way.
+  return vim.json.encode({
+    model = model,
+    thinking = { type = 'disabled' },
+    messages = { { role = 'user', content = prompt } },
+  })
 end
 
 function M.build_deepseek_command(context, model_id, api_key)
@@ -101,13 +109,21 @@ function M.parse_gemini_response(body)
   return vim.split(text, '\n', { plain = true, trimempty = false })
 end
 
+-- content is a LIST of typed blocks, and the text block is not necessarily
+-- first: claude-sonnet-5 prepends a {"type":"thinking"} block (observed live
+-- 5/5, 2026-08-25). Indexing content[1].text blindly crashed the completion
+-- mid-typing whenever thinking came first.
 function M.parse_claude_response(body)
   local ok, data = pcall(vim.json.decode, body)
-  if not ok or type(data) ~= 'table' or type(data.content) ~= 'table' or #data.content == 0 then
+  if not ok or type(data) ~= 'table' or type(data.content) ~= 'table' then
     return {}
   end
-  local text = data.content[1].text
-  return vim.split(text, '\n', { plain = true, trimempty = false })
+  for _, block in ipairs(data.content) do
+    if type(block) == 'table' and type(block.text) == 'string' then
+      return vim.split(block.text, '\n', { plain = true, trimempty = false })
+    end
+  end
+  return {}
 end
 
 -- Every API family implements two operations with a uniform signature:

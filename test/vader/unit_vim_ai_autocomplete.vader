@@ -361,8 +361,22 @@ Execute (UN-021a BuildDeepseekCommand: correct endpoint, auth header and body):
   let body_idx = index(result, '-d') + 1
   let decoded = json_decode(result[body_idx])
   AssertEqual 'deepseek-v4-flash', decoded.model
+  " without this, deepseek-v4-flash reasons before answering: 55.6s measured
+  " vs 1.6s with thinking disabled (real calls, 2026-08-25)
+  AssertEqual 'disabled', decoded.thinking.type
   AssertEqual 'user', decoded.messages[0].role
   Assert decoded.messages[0].content =~# 'def foo(', 'the body should contain the context'
+
+" claude-sonnet-5 prepends a {"type":"thinking"} block to content (observed
+" live 5/5 on 2026-08-25) -- the text block is NOT content[0]. Indexing
+" content[0].text blindly threw E716 mid-typing and killed the completion.
+Execute (UN-010a ParseClaudeResponse: skips a leading thinking block and reads the first text block):
+  let body = json_encode({'content': [{'type': 'thinking', 'thinking': '', 'signature': 'abc'}, {'type': 'text', 'text': "x\ny"}]})
+  AssertEqual ['x', 'y'], vim_ai_autocomplete#ParseClaudeResponse(body)
+
+Execute (UN-010b ParseClaudeResponse: content with only thinking blocks -> empty list, no error):
+  let body = json_encode({'content': [{'type': 'thinking', 'thinking': ''}]})
+  AssertEqual [], vim_ai_autocomplete#ParseClaudeResponse(body)
 
 Execute (UN-021b ParseDeepseekResponse: extracts the text from an OpenAI-compatible response):
   let body = json_encode({'choices': [{'message': {'content': "x\ny"}}]})

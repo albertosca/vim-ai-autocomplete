@@ -47,6 +47,22 @@ describe("vim-ai-autocomplete.family.parse_claude_response", function()
     assert.are.same({ 'x', 'y' }, family.parse_claude_response(body))
   end)
 
+  -- claude-sonnet-5 prepends a {"type":"thinking"} block to content (observed
+  -- live 5/5 on 2026-08-25) -- the text block is NOT content[1]. Indexing
+  -- content[1].text blindly threw and killed the whole completion.
+  it("skips a leading thinking block and reads the first text block", function()
+    local body = vim.json.encode({ content = {
+      { type = 'thinking', thinking = '', signature = 'abc' },
+      { type = 'text', text = 'x\ny' },
+    } })
+    assert.are.same({ 'x', 'y' }, family.parse_claude_response(body))
+  end)
+
+  it("content with only thinking blocks -> empty list, no error", function()
+    local body = vim.json.encode({ content = { { type = 'thinking', thinking = '' } } })
+    assert.are.same({}, family.parse_claude_response(body))
+  end)
+
   it("response with no content -> empty list", function()
     assert.are.same({}, family.parse_claude_response('{}'))
   end)
@@ -96,6 +112,9 @@ describe("vim-ai-autocomplete.family.family_handler", function()
     end
     local decoded = vim.json.decode(cmd[d_idx])
     assert.are.equal('deepseek-v4-flash', decoded.model)
+    -- without this, deepseek-v4-flash reasons before answering: 55.6s
+    -- measured vs 1.6s with thinking disabled (real calls, 2026-08-25)
+    assert.are.equal('disabled', decoded.thinking.type)
     assert.are.equal('user', decoded.messages[1].role)
     assert.is_not_nil(string.find(decoded.messages[1].content, 'def foo%('))
   end)

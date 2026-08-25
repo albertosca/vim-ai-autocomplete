@@ -130,9 +130,13 @@ endfunction
 " requirement, just {model, messages: [{role, content}]}. Confirmed against
 " the official docs (api-docs.deepseek.com) on 2026-08-10, not assumed from
 " memory.
+" thinking must be disabled explicitly: deepseek-v4-flash reasons by default,
+" and the reasoning made a completion take 55.6s against 1.6s with it off
+" (both measured with real calls, 2026-08-25) -- useless for an autocomplete
+" either way.
 function! vim_ai_autocomplete#BuildDeepseekRequest(context, model) abort
   let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
-  return json_encode({'model': a:model, 'messages': [{'role': 'user', 'content': prompt}]})
+  return json_encode({'model': a:model, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': prompt}]})
 endfunction
 
 " Finds the longest overlap between the END of the suggestion and the START
@@ -399,17 +403,25 @@ function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
   return split(text, "\n", 1)
 endfunction
 
+" content is a LIST of typed blocks, and the text block is not necessarily
+" first: claude-sonnet-5 prepends a {"type":"thinking"} block (observed live
+" 5/5, 2026-08-25). Indexing content[0].text blindly threw E716 mid-typing
+" whenever thinking came first.
 function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   try
     let data = json_decode(a:body)
   catch
     return []
   endtry
-  if type(data) != v:t_dict || !has_key(data, 'content') || empty(data.content)
+  if type(data) != v:t_dict || type(get(data, 'content', v:null)) != v:t_list
     return []
   endif
-  let text = data.content[0].text
-  return split(text, "\n", 1)
+  for block in data.content
+    if type(block) == v:t_dict && type(get(block, 'text', v:null)) == v:t_string
+      return split(block.text, "\n", 1)
+    endif
+  endfor
+  return []
 endfunction
 
 " Same defensive shape as ParseGeminiResponse: a malformed/blocked response
