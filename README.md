@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **206 tests, no network required** — 105 vader (Vim) + 101 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **224 tests, no network required** — 112 vader (Vim) + 112 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 

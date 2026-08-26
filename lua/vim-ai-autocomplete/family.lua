@@ -1,6 +1,29 @@
 local M = {}
 
-local PROMPT_TEMPLATE = 'Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n%s\n\nAFTER THE CURSOR:\n%s'
+-- One prompt for every family -- swapping engines must never change what
+-- the model reads (pinned by the engine-agnostic invariant test).
+local INSTRUCTION_HEAD = 'Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER, and do not complete any other unfinished code elsewhere in the file. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n'
+
+-- Field finding 2026-08-26 (reproduced 6/6 with real calls): in a file full
+-- of unfinished stubs, with an empty AFTER, every model -- including
+-- claude-haiku -- completed the file's FIRST visible hole instead of
+-- continuing at the cursor. Quoting the exact last characters of BEFORE as a
+-- final anchor line measured 4/4 correct on gemini and deepseek in a real
+-- shootout (a <CURSOR> sentinel and DeepSeek's native FIM endpoint both
+-- failed: 1/2 wrong and 2/2 empty). Character-based slicing, not bytes --
+-- a byte cut could split a multibyte char and quote garbage.
+local function anchor_line(before)
+  if before == '' then
+    return ''
+  end
+  local chars = vim.fn.strchars(before)
+  local tail = chars > 20 and vim.fn.strcharpart(before, chars - 20) or before
+  return '\n\nYour completion must continue immediately after these exact characters: ' .. vim.json.encode(tail)
+end
+
+local function build_full_prompt(context)
+  return INSTRUCTION_HEAD .. context.before .. '\n\nAFTER THE CURSOR:\n' .. context.after .. anchor_line(context.before)
+end
 
 -- Extracts the error message from a JSON error response from the API (a
 -- shape common to Gemini and Claude: {"error": {"message": ...}}). Returns
@@ -18,8 +41,7 @@ function M.extract_api_error_message(raw_output)
 end
 
 function M.build_gemini_request(context)
-  local prompt = string.format(PROMPT_TEMPLATE, context.before, context.after)
-  return vim.json.encode({ contents = { { parts = { { text = prompt } } } } })
+  return vim.json.encode({ contents = { { parts = { { text = build_full_prompt(context) } } } } })
 end
 
 -- Anthropic prefix caching only pays when the prefix repeats byte-for-byte
@@ -35,12 +57,11 @@ function M.build_claude_request(context, model)
   if type(tail) == 'string' and tail ~= '' and #tail < #context.before
       and context.before:sub(-#tail) == tail then
     local stable = context.before:sub(1, #context.before - #tail)
-    local head = string.format(PROMPT_TEMPLATE, stable, '')
-    -- PROMPT_TEMPLATE ends with the AFTER section; rebuild the two halves
-    -- around the split point instead, keeping concatenation byte-identical.
-    local full = string.format(PROMPT_TEMPLATE, context.before, context.after)
-    local block1 = full:sub(1, #head - #('\n\nAFTER THE CURSOR:\n'))
-    local block2 = full:sub(#block1 + 1)
+    -- the anchor quotes the end of BEFORE (the volatile tail), so it lives
+    -- in block 2 -- block 1 stays byte-identical across keystrokes (pinned
+    -- by the cache-stability test).
+    local block1 = INSTRUCTION_HEAD .. stable
+    local block2 = tail .. '\n\nAFTER THE CURSOR:\n' .. context.after .. anchor_line(context.before)
     return vim.json.encode({
       model = model,
       max_tokens = 256,
@@ -50,8 +71,7 @@ function M.build_claude_request(context, model)
       } } },
     })
   end
-  local prompt = string.format(PROMPT_TEMPLATE, context.before, context.after)
-  return vim.json.encode({ model = model, max_tokens = 256, messages = { { role = 'user', content = prompt } } })
+  return vim.json.encode({ model = model, max_tokens = 256, messages = { { role = 'user', content = build_full_prompt(context) } } })
 end
 
 function M.build_gemini_command(context, model_id, api_key)
@@ -77,7 +97,6 @@ end
 -- body {model, messages: [{role, content}]}. Confirmed against the official
 -- docs (api-docs.deepseek.com) on 2026-08-10, not assumed from memory.
 function M.build_deepseek_request(context, model)
-  local prompt = string.format(PROMPT_TEMPLATE, context.before, context.after)
   -- thinking must be disabled explicitly: deepseek-v4-flash reasons by
   -- default, and the reasoning made a completion take 55.6s against 1.6s
   -- with it off (both measured with real calls, 2026-08-25) -- useless for
@@ -85,7 +104,7 @@ function M.build_deepseek_request(context, model)
   return vim.json.encode({
     model = model,
     thinking = { type = 'disabled' },
-    messages = { { role = 'user', content = prompt } },
+    messages = { { role = 'user', content = build_full_prompt(context) } },
   })
 end
 
@@ -108,6 +127,21 @@ local function strip_replacement_chars(text)
   return (text:gsub('\239\191\189', ''))
 end
 
+-- Observed live 2026-08-26: claude-haiku wrapped a completion in ```python
+-- fences even though the prompt forbids markdown. A fenced suggestion is
+-- never insertable as-is -- unwrap a leading ```lang line and a trailing ```
+-- line. Fences in the MIDDLE are left alone: they can be legitimate content
+-- (e.g. completing a markdown document).
+local function strip_wrapping_fences(text)
+  text = text:gsub('^```[^\n]*\n', '')
+  text = text:gsub('\n```%s*$', '')
+  return text
+end
+
+local function sanitize_suggestion_text(text)
+  return strip_wrapping_fences(strip_replacement_chars(text))
+end
+
 -- Same defensive shape as parse_gemini_response: a malformed/blocked
 -- response is a legitimate possibility (rate limit, content filter), not an
 -- error to crash on -- guard every level instead of indexing straight
@@ -121,7 +155,7 @@ function M.parse_deepseek_response(body)
   if type(message) ~= 'table' or type(message.content) ~= 'string' then
     return {}
   end
-  return vim.split(strip_replacement_chars(message.content), '\n', { plain = true, trimempty = false })
+  return vim.split(sanitize_suggestion_text(message.content), '\n', { plain = true, trimempty = false })
 end
 
 -- A blocked candidate (safety filter, finishReason SAFETY/RECITATION) comes
@@ -143,7 +177,7 @@ function M.parse_gemini_response(body)
     return {}
   end
   local text = parts[1].text
-  return vim.split(strip_replacement_chars(text), '\n', { plain = true, trimempty = false })
+  return vim.split(sanitize_suggestion_text(text), '\n', { plain = true, trimempty = false })
 end
 
 -- content is a LIST of typed blocks, and the text block is not necessarily
@@ -157,7 +191,7 @@ function M.parse_claude_response(body)
   end
   for _, block in ipairs(data.content) do
     if type(block) == 'table' and type(block.text) == 'string' then
-      return vim.split(strip_replacement_chars(block.text), '\n', { plain = true, trimempty = false })
+      return vim.split(sanitize_suggestion_text(block.text), '\n', { plain = true, trimempty = false })
     end
   end
   return {}

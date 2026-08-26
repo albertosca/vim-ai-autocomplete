@@ -108,6 +108,95 @@ describe("vim-ai-autocomplete.family.parse_deepseek_response", function()
   end)
 end)
 
+describe("vim-ai-autocomplete.family markdown fence stripping", function()
+  -- Observed live 2026-08-26: claude-haiku wrapped a completion in
+  -- ```python fences even though the prompt forbids markdown. A fenced
+  -- suggestion is never insertable as-is -- unwrap a leading ```lang line
+  -- and a trailing ``` line; fences in the MIDDLE are left alone (they can
+  -- be legitimate content, e.g. completing a markdown document).
+  it("unwraps a fenced suggestion", function()
+    local body = vim.json.encode({ content = { { type = 'text', text = '```python\nx = 1\n```' } } })
+    assert.are.same({ 'x = 1' }, family.parse_claude_response(body))
+  end)
+
+  it("unwraps a fence with no language tag", function()
+    local body = vim.json.encode({ candidates = { { content = { parts = { { text = '```\ncode\n```' } } } } } })
+    assert.are.same({ 'code' }, family.parse_gemini_response(body))
+  end)
+
+  it("strips a lone leading fence line", function()
+    local body = vim.json.encode({ choices = { { message = { content = '```python\ncode' } } } })
+    assert.are.same({ 'code' }, family.parse_deepseek_response(body))
+  end)
+
+  it("leaves fences in the middle of the text alone", function()
+    local text = 'line one\n```\nline two'
+    local body = vim.json.encode({ choices = { { message = { content = text } } } })
+    assert.are.same({ 'line one', '```', 'line two' }, family.parse_deepseek_response(body))
+  end)
+
+  it("text without fences is untouched", function()
+    local body = vim.json.encode({ choices = { { message = { content = 'a\nb' } } } })
+    assert.are.same({ 'a', 'b' }, family.parse_deepseek_response(body))
+  end)
+end)
+
+describe("vim-ai-autocomplete.family prompt v2 (tail anchor)", function()
+  -- Field finding 2026-08-26 (reproduced 6/6 with real calls): in a file full
+  -- of unfinished stubs, with an empty AFTER, every model -- including
+  -- claude-haiku -- completed the file's FIRST visible hole (fibonacci)
+  -- instead of continuing at the cursor. A prompt shootout on the same hard
+  -- case measured the fix: quoting the exact last characters of BEFORE as a
+  -- final anchor line went 4/4 correct on gemini and deepseek (sentinel and
+  -- DeepSeek's native FIM endpoint both failed -- 1/2 wrong and 2/2 empty).
+  it("every family sends the SAME full prompt text (engine-agnostic invariant)", function()
+    local ctx = { before = 'line a\nclass Stack:', after = 'tail after' }
+    local gem = vim.json.decode(family.build_gemini_request(ctx))
+    local dsk = vim.json.decode(family.build_deepseek_request(ctx, 'm'))
+    local cla = vim.json.decode(family.build_claude_request(ctx, 'm'))
+    local gem_prompt = gem.contents[1].parts[1].text
+    assert.are.equal(gem_prompt, dsk.messages[1].content)
+    assert.are.equal(gem_prompt, cla.messages[1].content)
+  end)
+
+  it("the prompt ends with an anchor quoting the exact tail of BEFORE", function()
+    local ctx = { before = 'x = 1\nclass Stack:', after = '' }
+    local gem = vim.json.decode(family.build_gemini_request(ctx))
+    local prompt = gem.contents[1].parts[1].text
+    assert.is_not_nil(prompt:find('continue immediately after these exact characters', 1, true))
+    -- the quoted tail is the LAST characters of before, json-quoted
+    assert.is_not_nil(prompt:find(vim.json.encode('x = 1\nclass Stack:'), 1, true))
+  end)
+
+  it("a long BEFORE quotes only its last 20 characters, counted per character", function()
+    local ctx = { before = string.rep('a', 50) .. 'END-OF-BEFORE-çãd:', after = '' }
+    local gem = vim.json.decode(family.build_gemini_request(ctx))
+    local prompt = gem.contents[1].parts[1].text
+    local expected_tail = vim.fn.strcharpart(ctx.before, vim.fn.strchars(ctx.before) - 20)
+    assert.is_not_nil(prompt:find(vim.json.encode(expected_tail), 1, true))
+  end)
+
+  it("empty BEFORE -> no anchor line", function()
+    local ctx = { before = '', after = 'something' }
+    local gem = vim.json.decode(family.build_gemini_request(ctx))
+    assert.is_nil(gem.contents[1].parts[1].text:find('exact characters', 1, true))
+  end)
+
+  it("the instruction forbids completing other unfinished code", function()
+    local ctx = { before = 'a', after = 'b' }
+    local gem = vim.json.decode(family.build_gemini_request(ctx))
+    assert.is_not_nil(gem.contents[1].parts[1].text:find('do not complete any other unfinished code', 1, true))
+  end)
+
+  it("CACHE STABILITY: two keystrokes (same stable, different tail) leave block 1 byte-identical", function()
+    local stable = 'def helper():\n    pass\n'
+    local a = vim.json.decode(family.build_claude_request({ before = stable .. 'x = hel', before_tail = 'x = hel', after = '' }, 'm'))
+    local b = vim.json.decode(family.build_claude_request({ before = stable .. 'x = help', before_tail = 'x = help', after = '' }, 'm'))
+    assert.are.equal(a.messages[1].content[1].text, b.messages[1].content[1].text)
+    assert.are_not.equal(a.messages[1].content[2].text, b.messages[1].content[2].text)
+  end)
+end)
+
 describe("vim-ai-autocomplete.family.build_claude_request prompt caching", function()
   -- Anthropic prefix caching only pays when the prefix repeats byte-for-byte
   -- between requests. While typing inside a line, everything ABOVE that line

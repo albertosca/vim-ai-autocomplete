@@ -346,6 +346,62 @@ Execute (UN-021 FamilyHandler: the "anthropic" family returns BuildClaudeCommand
   AssertEqual function('vim_ai_autocomplete#BuildClaudeCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseClaudeResponse'), handler.parse_response
 
+" UN-061: markdown fence stripping. Observed live 2026-08-26: claude-haiku
+" wrapped a completion in ```python fences even though the prompt forbids
+" markdown. Unwrap a leading ```lang line and a trailing ``` line; fences in
+" the MIDDLE are left alone (legitimate when completing a markdown document).
+Execute (UN-061 parsers unwrap fenced suggestions but keep mid-text fences):
+  let cla = json_encode({'content': [{'type': 'text', 'text': "```python\nx = 1\n```"}]})
+  AssertEqual ['x = 1'], vim_ai_autocomplete#ParseClaudeResponse(cla)
+  let gem = json_encode({'candidates': [{'content': {'parts': [{'text': "```\ncode\n```"}]}}]})
+  AssertEqual ['code'], vim_ai_autocomplete#ParseGeminiResponse(gem)
+  let dsk = json_encode({'choices': [{'message': {'content': "line one\n```\nline two"}}]})
+  AssertEqual ['line one', '```', 'line two'], vim_ai_autocomplete#ParseDeepseekResponse(dsk)
+
+" UN-006a to UN-006f: prompt v2 (tail anchor). Field finding 2026-08-26
+" (reproduced 6/6 with real calls): in a file full of unfinished stubs, with
+" an empty AFTER, every model -- including claude-haiku -- completed the
+" file's FIRST visible hole instead of continuing at the cursor. Quoting the
+" exact last characters of BEFORE as a final anchor line measured 4/4 correct
+" on gemini and deepseek in a real shootout.
+
+Execute (UN-006a every family sends the SAME full prompt text (engine-agnostic invariant)):
+  let ctx = {'before': "line a\nclass Stack:", 'after': 'tail after'}
+  let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest(ctx))
+  let dsk = json_decode(vim_ai_autocomplete#BuildDeepseekRequest(ctx, 'm'))
+  let cla = json_decode(vim_ai_autocomplete#BuildClaudeRequest(ctx, 'm'))
+  let gem_prompt = gem.contents[0].parts[0].text
+  AssertEqual gem_prompt, dsk.messages[0].content
+  AssertEqual gem_prompt, cla.messages[0].content
+
+Execute (UN-006b the prompt ends with an anchor quoting the exact tail of BEFORE):
+  let ctx = {'before': "x = 1\nclass Stack:", 'after': ''}
+  let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest(ctx))
+  let prompt = gem.contents[0].parts[0].text
+  Assert stridx(prompt, 'continue immediately after these exact characters') >= 0
+  Assert stridx(prompt, json_encode("x = 1\nclass Stack:")) >= 0
+
+Execute (UN-006c a long BEFORE quotes only its last 20 characters, counted per character):
+  let before = repeat('a', 50) . 'END-OF-BEFORE-cad:'
+  let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest({'before': before, 'after': ''}))
+  let expected_tail = strcharpart(before, strchars(before) - 20)
+  Assert stridx(gem.contents[0].parts[0].text, json_encode(expected_tail)) >= 0
+
+Execute (UN-006d empty BEFORE -> no anchor line):
+  let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest({'before': '', 'after': 'x'}))
+  AssertEqual -1, stridx(gem.contents[0].parts[0].text, 'exact characters')
+
+Execute (UN-006e the instruction forbids completing other unfinished code):
+  let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest({'before': 'a', 'after': 'b'}))
+  Assert stridx(gem.contents[0].parts[0].text, 'do not complete any other unfinished code') >= 0
+
+Execute (UN-006f CACHE STABILITY: same stable + different tail leaves block 1 byte-identical):
+  let stable = "def helper():\n    pass\n"
+  let a = json_decode(vim_ai_autocomplete#BuildClaudeRequest({'before': stable . 'x = hel', 'before_tail': 'x = hel', 'after': ''}, 'm'))
+  let b = json_decode(vim_ai_autocomplete#BuildClaudeRequest({'before': stable . 'x = help', 'before_tail': 'x = help', 'after': ''}, 'm'))
+  AssertEqual a.messages[0].content[0].text, b.messages[0].content[0].text
+  Assert a.messages[0].content[1].text !=# b.messages[0].content[1].text
+
 " UN-016a/b: Anthropic prompt caching -- the request is split into two text
 " blocks when context.before_tail is present (block 1 = instruction + stable
 " before-context with cache_control ephemeral; block 2 = current-line tail +

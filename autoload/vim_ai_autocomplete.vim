@@ -116,9 +116,33 @@ endfunction
 " instruction alone is not 100% reliable (another real test showed the model
 " repeating the whole suffix 3/3 times) -- which is why
 " ComputeTextOverlapLength() also exists as a post-processing safety net.
+" One prompt for every family -- swapping engines must never change what the
+" model reads (pinned by the engine-agnostic invariant test UN-006a).
+let s:instruction_head = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER, and do not complete any other unfinished code elsewhere in the file. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n"
+
+" Field finding 2026-08-26 (reproduced 6/6 with real calls): in a file full of
+" unfinished stubs, with an empty AFTER, every model -- including claude-haiku
+" -- completed the file's FIRST visible hole instead of continuing at the
+" cursor. Quoting the exact last characters of BEFORE as a final anchor line
+" measured 4/4 correct on gemini and deepseek in a real shootout (a <CURSOR>
+" sentinel and DeepSeek's native FIM endpoint both failed: 1/2 wrong and 2/2
+" empty). Character-based slicing, not bytes -- a byte cut could split a
+" multibyte char and quote garbage.
+function! s:AnchorLine(before) abort
+  if empty(a:before)
+    return ''
+  endif
+  let chars = strchars(a:before)
+  let tail = chars > 20 ? strcharpart(a:before, chars - 20) : a:before
+  return "\n\nYour completion must continue immediately after these exact characters: " . json_encode(tail)
+endfunction
+
+function! s:BuildFullPrompt(context) abort
+  return s:instruction_head . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after . s:AnchorLine(a:context.before)
+endfunction
+
 function! vim_ai_autocomplete#BuildGeminiRequest(context) abort
-  let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
-  return json_encode({'contents': [{'parts': [{'text': prompt}]}]})
+  return json_encode({'contents': [{'parts': [{'text': s:BuildFullPrompt(a:context)}]}]})
 endfunction
 
 " Anthropic prefix caching only pays when the prefix repeats byte-for-byte
@@ -130,20 +154,21 @@ endfunction
 " volatile tail + AFTER. Anthropic concatenates text blocks, so the model
 " sees exactly the same prompt as the single-string form.
 function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
-  let instruction = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n"
   let tail = get(a:context, 'before_tail', '')
   if type(tail) == v:t_string && !empty(tail) && len(tail) < len(a:context.before)
         \ && strpart(a:context.before, len(a:context.before) - len(tail)) ==# tail
     let stable = strpart(a:context.before, 0, len(a:context.before) - len(tail))
-    let block1 = instruction . stable
-    let block2 = tail . "\n\nAFTER THE CURSOR:\n" . a:context.after
+    " the anchor quotes the end of BEFORE (the volatile tail), so it lives in
+    " block 2 -- block 1 stays byte-identical across keystrokes (pinned by
+    " the cache-stability test UN-006f).
+    let block1 = s:instruction_head . stable
+    let block2 = tail . "\n\nAFTER THE CURSOR:\n" . a:context.after . s:AnchorLine(a:context.before)
     return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': [
           \ {'type': 'text', 'text': block1, 'cache_control': {'type': 'ephemeral'}},
           \ {'type': 'text', 'text': block2},
           \ ]}]})
   endif
-  let prompt = instruction . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
-  return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
+  return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': s:BuildFullPrompt(a:context)}]})
 endfunction
 
 " DeepSeek's API is OpenAI-compatible chat completions: no "max_tokens"
@@ -155,8 +180,7 @@ endfunction
 " (both measured with real calls, 2026-08-25) -- useless for an autocomplete
 " either way.
 function! vim_ai_autocomplete#BuildDeepseekRequest(context, model) abort
-  let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
-  return json_encode({'model': a:model, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': prompt}]})
+  return json_encode({'model': a:model, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': s:BuildFullPrompt(a:context)}]})
 endfunction
 
 " Finds the longest overlap between the END of the suggestion and the START
@@ -408,6 +432,21 @@ function! s:StripReplacementChars(text) abort
   return substitute(a:text, "\xef\xbf\xbd", '', 'g')
 endfunction
 
+" Observed live 2026-08-26: claude-haiku wrapped a completion in ```python
+" fences even though the prompt forbids markdown. A fenced suggestion is
+" never insertable as-is -- unwrap a leading ```lang line and a trailing ```
+" line. Fences in the MIDDLE are left alone: they can be legitimate content
+" (e.g. completing a markdown document).
+function! s:StripWrappingFences(text) abort
+  let text = substitute(a:text, '^```[^\n]*\n', '', '')
+  let text = substitute(text, '\n```\s*$', '', '')
+  return text
+endfunction
+
+function! s:SanitizeSuggestionText(text) abort
+  return s:StripWrappingFences(s:StripReplacementChars(a:text))
+endfunction
+
 " A blocked candidate (safety filter, finishReason SAFETY/RECITATION)
 " comes back WITHOUT "content", or without "parts" -- a legitimate HTTP 200
 " response, just with no actual suggestion. Real finding, reported from a
@@ -430,7 +469,7 @@ function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
     return []
   endif
   let text = parts[0].text
-  return split(s:StripReplacementChars(text), "\n", 1)
+  return split(s:SanitizeSuggestionText(text), "\n", 1)
 endfunction
 
 " content is a LIST of typed blocks, and the text block is not necessarily
@@ -448,7 +487,7 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   endif
   for block in data.content
     if type(block) == v:t_dict && type(get(block, 'text', v:null)) == v:t_string
-      return split(s:StripReplacementChars(block.text), "\n", 1)
+      return split(s:SanitizeSuggestionText(block.text), "\n", 1)
     endif
   endfor
   return []
@@ -471,7 +510,7 @@ function! vim_ai_autocomplete#ParseDeepseekResponse(body) abort
   if type(message) != v:t_dict || type(get(message, 'content', v:null)) != v:t_string
     return []
   endif
-  return split(s:StripReplacementChars(message.content), "\n", 1)
+  return split(s:SanitizeSuggestionText(message.content), "\n", 1)
 endfunction
 
 " Some models (confirmed with gemini-3.1-flash-lite, reproducible 3/3
