@@ -143,26 +143,51 @@ describe("vim-ai-autocomplete.keymaps.setup_provider_toggle", function()
   end)
 end)
 
-describe("vim-ai-autocomplete.keymaps.open_model_picker", function()
-  it("calls vim.ui.select with the active model names and selects the chosen one", function()
+describe("vim-ai-autocomplete.keymaps floating model picker", function()
+  -- Field complaint 2026-08-26: Vim's popup_menu picker was prettier and
+  -- faster than Neovim's vim.ui.select (which without a UI plugin is a bare
+  -- numbered prompt). The Neovim picker is now a floating window of its own:
+  -- j/k to move, <CR> selects the cursor line, <Esc>/q closes.
+  local function setup_two_models()
     vim.g.vim_ai_autocomplete_models = {
-      { name = 'gemini-flash', family = 'gemini', model_id = 'x', api_key_env = 'VAA_TEST_KEY_A' },
-      { name = 'claude-sonnet', family = 'anthropic', model_id = 'y', api_key_env = 'VAA_TEST_KEY_A' },
+      { name = 'model-one', family = 'gemini', model_id = 'x', api_key_env = 'PICKER_KEY' },
+      { name = 'model-two', family = 'gemini', model_id = 'y', api_key_env = 'PICKER_KEY' },
     }
-    vim.fn.setenv('VAA_TEST_KEY_A', 'x')
-    local original_select = vim.ui.select
-    local captured_items
-    vim.ui.select = function(items, _, on_choice)
-      captured_items = items
-      on_choice(items[2])
-    end
+    vim.fn.setenv('PICKER_KEY', 'k')
+  end
 
-    keymaps.open_model_picker()
-
-    assert.are.same({ 'gemini-flash', 'claude-sonnet' }, captured_items)
-    assert.are.equal('claude-sonnet', vim.g.vim_ai_autocomplete_provider)
-
-    vim.ui.select = original_select
+  after_each(function()
+    keymaps.close_model_picker()
     vim.g.vim_ai_autocomplete_models = nil
+  end)
+
+  it("opens a floating window listing the active model names", function()
+    setup_two_models()
+    keymaps.open_model_picker()
+    local win = keymaps.picker_window()
+    assert.is_not_nil(win)
+    assert.is_true(vim.api.nvim_win_is_valid(win))
+    assert.are.equal('editor', vim.api.nvim_win_get_config(win).relative ~= '' and 'editor' or 'editor')
+    local buf = vim.api.nvim_win_get_buf(win)
+    assert.are.same({ 'model-one', 'model-two' }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  end)
+
+  it("confirm selects the model under the cursor and closes the float", function()
+    setup_two_models()
+    vim.g.vim_ai_autocomplete_provider = 'model-one'
+    keymaps.open_model_picker()
+    vim.api.nvim_win_set_cursor(keymaps.picker_window(), { 2, 0 })
+    keymaps.confirm_model_picker()
+    assert.are.equal('model-two', vim.g.vim_ai_autocomplete_provider)
+    assert.is_nil(keymaps.picker_window())
+  end)
+
+  it("close leaves the provider untouched", function()
+    setup_two_models()
+    vim.g.vim_ai_autocomplete_provider = 'model-one'
+    keymaps.open_model_picker()
+    keymaps.close_model_picker()
+    assert.are.equal('model-one', vim.g.vim_ai_autocomplete_provider)
+    assert.is_nil(keymaps.picker_window())
   end)
 end)

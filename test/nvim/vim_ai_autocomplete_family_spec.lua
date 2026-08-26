@@ -108,6 +108,63 @@ describe("vim-ai-autocomplete.family.parse_deepseek_response", function()
   end)
 end)
 
+describe("vim-ai-autocomplete.family anthropic thinking disabled", function()
+  -- claude-sonnet-5 thinks by default and, at a real end-of-file context,
+  -- returned an EMPTY text block 4/4 (242 thinking tokens, nothing visible)
+  -- even with max_tokens raised to 1024 (still 2/3 empty). Disabling
+  -- thinking measured 3/3 non-empty and 40% faster -- the same call we
+  -- already made for deepseek: reasoning-by-default has no place in an
+  -- autocomplete's latency budget.
+  it("the request disables thinking explicitly", function()
+    local body = vim.json.decode(family.build_claude_request({ before = 'a', after = 'b' }, 'claude-sonnet-5'))
+    assert.are.equal('disabled', body.thinking.type)
+  end)
+
+  it("the split (cached) form also disables thinking", function()
+    local body = vim.json.decode(family.build_claude_request({ before = 'ab\ncd', before_tail = 'cd', after = '' }, 'm'))
+    assert.are.equal('disabled', body.thinking.type)
+  end)
+end)
+
+describe("vim-ai-autocomplete.family empty-after-sanitize", function()
+  -- Observed live: with thinking off, sonnet once answered exactly
+  -- "```\n\n```" -- after unwrapping the fences nothing meaningful is left,
+  -- and showing a ghost made only of empty lines is an invisible suggestion
+  -- the user can accidentally accept. Whitespace-only results become "no
+  -- suggestion" ([]).
+  it("a suggestion that is only fences collapses to no suggestion", function()
+    local body = vim.json.encode({ content = { { type = 'text', text = '```\n\n```' } } })
+    assert.are.same({}, family.parse_claude_response(body))
+  end)
+
+  it("a whitespace-only suggestion collapses to no suggestion", function()
+    local body = vim.json.encode({ choices = { { message = { content = '  \n \n' } } } })
+    assert.are.same({}, family.parse_deepseek_response(body))
+  end)
+
+  it("a real suggestion with leading blank line is preserved", function()
+    local body = vim.json.encode({ choices = { { message = { content = '\n    pass' } } } })
+    assert.are.same({ '', '    pass' }, family.parse_deepseek_response(body))
+  end)
+end)
+
+describe("vim-ai-autocomplete.family gemini blocked-candidate warning", function()
+  -- Field report: "gemini returned nothing" with zero feedback. A RECITATION
+  -- or SAFETY finishReason legitimately carries no parts -- but silence makes
+  -- it undiagnosable. describe_completion_failure now names the block reason.
+  it("names a RECITATION block", function()
+    local body = vim.json.encode({ candidates = { { finishReason = 'RECITATION' } } })
+    local msg = family.describe_completion_failure('gemini-flash', 0, body)
+    assert.is_not_nil(msg)
+    assert.is_not_nil(msg:find('RECITATION', 1, true))
+  end)
+
+  it("a normal STOP with content stays silent", function()
+    local body = vim.json.encode({ candidates = { { finishReason = 'STOP', content = { parts = { { text = 'x' } } } } } })
+    assert.is_nil(family.describe_completion_failure('gemini-flash', 0, body))
+  end)
+end)
+
 describe("vim-ai-autocomplete.family markdown fence stripping", function()
   -- Observed live 2026-08-26: claude-haiku wrapped a completion in
   -- ```python fences even though the prompt forbids markdown. A fenced

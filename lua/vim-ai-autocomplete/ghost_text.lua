@@ -35,9 +35,12 @@ function M.show_suggestion(lines, redundant_after)
   for i = 2, #lines do
     table.insert(virt_lines, { { lines[i], 'Comment' } })
   end
+  -- mirror of the Vim-side guard: an empty first line has nothing to render
+  -- inline (on Vim an empty-text prop even renders as U+FFFD garbage), so
+  -- the extmark only carries virt_text when there is text to show.
   vim.api.nvim_buf_set_extmark(0, ns, lnum0, col0, {
-    virt_text = { { lines[1], 'Comment' } },
-    virt_text_pos = 'inline',
+    virt_text = lines[1] ~= '' and { { lines[1], 'Comment' } } or nil,
+    virt_text_pos = lines[1] ~= '' and 'inline' or nil,
     virt_lines = #virt_lines > 0 and virt_lines or nil,
   })
 

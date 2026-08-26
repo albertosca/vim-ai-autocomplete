@@ -148,22 +148,69 @@ function M.setup_provider_toggle(active_models)
   end
 end
 
--- Neovim-only extra: pick the model through vim.ui.select instead of typing
--- :VimAiAutocompleteModel <name> from memory. Works with Telescope
--- automatically when installed (Telescope replaces the global vim.ui.select
--- handler) -- no Telescope detection needed, that is how vim.ui.select is
--- meant to work.
+-- Neovim picker: a floating window of the active model names, mirroring the
+-- Vim side's popup_menu (field complaint 2026-08-26: vim.ui.select without a
+-- UI plugin is a bare numbered cmdline prompt -- uglier and slower than
+-- Vim's). j/k move, <CR> selects the cursor line, <Esc>/q close. The three
+-- pieces (open/confirm/close) are separate so the selection logic is
+-- testable headlessly, same shape as the Vim side's OnModelPicked.
+local picker = { win = nil, names = nil }
+
+function M.picker_window()
+  if picker.win and vim.api.nvim_win_is_valid(picker.win) then
+    return picker.win
+  end
+  return nil
+end
+
+function M.close_model_picker()
+  if picker.win and vim.api.nvim_win_is_valid(picker.win) then
+    vim.api.nvim_win_close(picker.win, true)
+  end
+  picker.win, picker.names = nil, nil
+end
+
+function M.confirm_model_picker()
+  local win = M.picker_window()
+  if not win then
+    return
+  end
+  local idx = vim.api.nvim_win_get_cursor(win)[1]
+  local name = picker.names and picker.names[idx]
+  M.close_model_picker()
+  if name then
+    M.select_model(name)
+  end
+end
+
 function M.open_model_picker()
+  M.close_model_picker()
   local active = models.active_models()
   local names = {}
+  local width = 12
   for _, m in ipairs(active) do
     table.insert(names, m.name)
+    width = math.max(width, #m.name + 2)
   end
-  vim.ui.select(names, { prompt = 'vim-ai-autocomplete: pick a model' }, function(choice)
-    if choice then
-      M.select_model(choice)
-    end
-  end)
+  if #names == 0 then
+    return
+  end
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, names)
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden = 'wipe'
+  picker.win = vim.api.nvim_open_win(buf, true, {
+    relative = 'cursor', row = 1, col = 0,
+    width = width, height = #names,
+    style = 'minimal', border = 'rounded',
+    title = ' pick a model ', title_pos = 'center',
+  })
+  picker.names = names
+  vim.wo[picker.win].cursorline = true
+  local opts = { buffer = buf, silent = true, nowait = true }
+  vim.keymap.set('n', '<CR>', M.confirm_model_picker, opts)
+  vim.keymap.set('n', '<Esc>', M.close_model_picker, opts)
+  vim.keymap.set('n', 'q', M.close_model_picker, opts)
 end
 
 return M

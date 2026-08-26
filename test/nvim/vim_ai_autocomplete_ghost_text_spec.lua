@@ -1,5 +1,32 @@
 local ghost_text = require('vim-ai-autocomplete.ghost_text')
 
+describe("vim-ai-autocomplete.ghost_text empty first line", function()
+  -- Mirror of the Vim-side finding (bare vim -u NONE renders an empty-text
+  -- inline prop as three U+FFFD): an empty first line has nothing to render
+  -- inline, so no inline virt_text extmark is created -- only the virt_lines
+  -- below. Accept still receives the full lines including the empty first.
+  it("creates no inline virt_text when the first line is empty", function()
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def fibonacci(n):' })
+    vim.fn.cursor(1, 18)
+    local gt = require('vim-ai-autocomplete.ghost_text')
+    gt.show_suggestion({ '', '    pass' })
+    local ns = vim.api.nvim_create_namespace('vim_ai_autocomplete')
+    local marks = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
+    for _, mark in ipairs(marks) do
+      local vt = mark[4].virt_text
+      if vt then
+        assert.are_not.equal('', vt[1][1])
+      end
+    end
+    assert.is_true(gt.is_visible())
+    assert.are.same({ '', '    pass' }, gt.current_suggestion())
+    gt.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+end)
+
 describe("vim-ai-autocomplete.ghost_text", function()
   local buf
 

@@ -52,6 +52,12 @@ end
 -- cacheable minimum Anthropic silently skips it -- no penalty); block 2 = the
 -- volatile tail + AFTER. Anthropic concatenates text blocks, so the model
 -- sees exactly the same prompt as the single-string form.
+--
+-- thinking is disabled explicitly: claude-sonnet-5 thinks by default and, at
+-- a real end-of-file context, returned an EMPTY text block 4/4 (242 thinking
+-- tokens, no visible output) even with max_tokens raised to 1024. Disabling
+-- it measured 3/3 non-empty and 40% faster (2026-08-26) -- the same call we
+-- made for deepseek.
 function M.build_claude_request(context, model)
   local tail = context.before_tail
   if type(tail) == 'string' and tail ~= '' and #tail < #context.before
@@ -65,13 +71,14 @@ function M.build_claude_request(context, model)
     return vim.json.encode({
       model = model,
       max_tokens = 256,
+      thinking = { type = 'disabled' },
       messages = { { role = 'user', content = {
         { type = 'text', text = block1, cache_control = { type = 'ephemeral' } },
         { type = 'text', text = block2 },
       } } },
     })
   end
-  return vim.json.encode({ model = model, max_tokens = 256, messages = { { role = 'user', content = build_full_prompt(context) } } })
+  return vim.json.encode({ model = model, max_tokens = 256, thinking = { type = 'disabled' }, messages = { { role = 'user', content = build_full_prompt(context) } } })
 end
 
 function M.build_gemini_command(context, model_id, api_key)
@@ -142,6 +149,17 @@ local function sanitize_suggestion_text(text)
   return strip_wrapping_fences(strip_replacement_chars(text))
 end
 
+-- A suggestion that sanitizes down to pure whitespace (e.g. sonnet once
+-- answered exactly "```\n\n```") is an invisible ghost the user can accept
+-- by accident -- collapse it to "no suggestion".
+local function split_suggestion(text)
+  local clean = sanitize_suggestion_text(text)
+  if clean:match('^%s*$') then
+    return {}
+  end
+  return vim.split(clean, '\n', { plain = true, trimempty = false })
+end
+
 -- Same defensive shape as parse_gemini_response: a malformed/blocked
 -- response is a legitimate possibility (rate limit, content filter), not an
 -- error to crash on -- guard every level instead of indexing straight
@@ -155,7 +173,7 @@ function M.parse_deepseek_response(body)
   if type(message) ~= 'table' or type(message.content) ~= 'string' then
     return {}
   end
-  return vim.split(sanitize_suggestion_text(message.content), '\n', { plain = true, trimempty = false })
+  return split_suggestion(message.content)
 end
 
 -- A blocked candidate (safety filter, finishReason SAFETY/RECITATION) comes
@@ -177,7 +195,7 @@ function M.parse_gemini_response(body)
     return {}
   end
   local text = parts[1].text
-  return vim.split(sanitize_suggestion_text(text), '\n', { plain = true, trimempty = false })
+  return split_suggestion(text)
 end
 
 -- content is a LIST of typed blocks, and the text block is not necessarily
@@ -191,7 +209,7 @@ function M.parse_claude_response(body)
   end
   for _, block in ipairs(data.content) do
     if type(block) == 'table' and type(block.text) == 'string' then
-      return vim.split(sanitize_suggestion_text(block.text), '\n', { plain = true, trimempty = false })
+      return split_suggestion(block.text)
     end
   end
   return {}
@@ -219,10 +237,22 @@ end
 -- no suggestion appeared and NO warning was shown -- same finding as on the
 -- Vim side. Returns nil when there is nothing wrong to report (a legitimately
 -- empty response, e.g. the cursor at the end of a complete file).
+-- A gemini candidate blocked by RECITATION/SAFETY legitimately carries no
+-- parts -- but reporting nothing made "gemini returned nothing" undiagnosable
+-- in the field (2026-08-26). Name the block reason instead of staying silent.
+local BLOCK_REASONS = { RECITATION = true, SAFETY = true, PROHIBITED_CONTENT = true, BLOCKLIST = true }
+
 function M.describe_completion_failure(provider, status, raw_output)
   local message = M.extract_api_error_message(raw_output)
   if message then
     return string.format('vim-ai-autocomplete (%s): %s', provider, message)
+  end
+  local ok, data = pcall(vim.json.decode, raw_output)
+  if ok and type(data) == 'table' and type(data.candidates) == 'table' and #data.candidates > 0 then
+    local reason = data.candidates[1].finishReason
+    if type(reason) == 'string' and BLOCK_REASONS[reason] then
+      return string.format('vim-ai-autocomplete (%s): suggestion blocked (%s)', provider, reason)
+    end
   end
   if status ~= 0 then
     return string.format('vim-ai-autocomplete (%s): request failed (exit %d), no detail in the response', provider, status)

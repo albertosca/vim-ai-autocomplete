@@ -153,6 +153,12 @@ endfunction
 " cacheable minimum Anthropic silently skips it -- no penalty); block 2 = the
 " volatile tail + AFTER. Anthropic concatenates text blocks, so the model
 " sees exactly the same prompt as the single-string form.
+"
+" thinking is disabled explicitly: claude-sonnet-5 thinks by default and, at
+" a real end-of-file context, returned an EMPTY text block 4/4 (242 thinking
+" tokens, no visible output) even with max_tokens raised to 1024. Disabling
+" it measured 3/3 non-empty and 40% faster (2026-08-26) -- the same call we
+" made for deepseek.
 function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
   let tail = get(a:context, 'before_tail', '')
   if type(tail) == v:t_string && !empty(tail) && len(tail) < len(a:context.before)
@@ -163,12 +169,12 @@ function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
     " the cache-stability test UN-006f).
     let block1 = s:instruction_head . stable
     let block2 = tail . "\n\nAFTER THE CURSOR:\n" . a:context.after . s:AnchorLine(a:context.before)
-    return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': [
+    return json_encode({'model': a:model, 'max_tokens': 256, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': [
           \ {'type': 'text', 'text': block1, 'cache_control': {'type': 'ephemeral'}},
           \ {'type': 'text', 'text': block2},
           \ ]}]})
   endif
-  return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': s:BuildFullPrompt(a:context)}]})
+  return json_encode({'model': a:model, 'max_tokens': 256, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': s:BuildFullPrompt(a:context)}]})
 endfunction
 
 " DeepSeek's API is OpenAI-compatible chat completions: no "max_tokens"
@@ -447,6 +453,19 @@ function! s:SanitizeSuggestionText(text) abort
   return s:StripWrappingFences(s:StripReplacementChars(a:text))
 endfunction
 
+" A suggestion that sanitizes down to pure whitespace (e.g. sonnet once
+" answered exactly "```\n\n```") is an invisible ghost the user can accept
+" by accident -- collapse it to "no suggestion".
+function! s:SplitSuggestion(text) abort
+  let clean = s:SanitizeSuggestionText(a:text)
+  " \_s, not \s: Vim's \s does not match newlines, and a multi-line
+  " whitespace-only suggestion must still collapse (Lua's %s covers \n).
+  if clean =~# '^\_s*$'
+    return []
+  endif
+  return split(clean, "\n", 1)
+endfunction
+
 " A blocked candidate (safety filter, finishReason SAFETY/RECITATION)
 " comes back WITHOUT "content", or without "parts" -- a legitimate HTTP 200
 " response, just with no actual suggestion. Real finding, reported from a
@@ -469,7 +488,7 @@ function! vim_ai_autocomplete#ParseGeminiResponse(body) abort
     return []
   endif
   let text = parts[0].text
-  return split(s:SanitizeSuggestionText(text), "\n", 1)
+  return s:SplitSuggestion(text)
 endfunction
 
 " content is a LIST of typed blocks, and the text block is not necessarily
@@ -487,7 +506,7 @@ function! vim_ai_autocomplete#ParseClaudeResponse(body) abort
   endif
   for block in data.content
     if type(block) == v:t_dict && type(get(block, 'text', v:null)) == v:t_string
-      return split(s:SanitizeSuggestionText(block.text), "\n", 1)
+      return s:SplitSuggestion(block.text)
     endif
   endfor
   return []
@@ -510,7 +529,7 @@ function! vim_ai_autocomplete#ParseDeepseekResponse(body) abort
   if type(message) != v:t_dict || type(get(message, 'content', v:null)) != v:t_string
     return []
   endif
-  return split(s:SanitizeSuggestionText(message.content), "\n", 1)
+  return s:SplitSuggestion(message.content)
 endfunction
 
 " Some models (confirmed with gemini-3.1-flash-lite, reproducible 3/3
@@ -586,7 +605,14 @@ function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
     return
   endif
   call s:EnsurePropType()
-  call prop_add(line('.'), col('.'), {'type': s:prop_type, 'text': a:lines[0]})
+  " never add an inline prop with empty text: Vim stores it as a control
+  " byte (prop_list shows 'text': '^D') and renders it as three U+FFFD --
+  " isolated in bare `vim -u NONE`. An empty first line (every python
+  " block-opener suggestion, via AdjustSuggestionLines) simply has nothing
+  " to render inline; the below-lines carry the visible ghost.
+  if !empty(a:lines[0])
+    call prop_add(line('.'), col('.'), {'type': s:prop_type, 'text': a:lines[0]})
+  endif
   for l in a:lines[1:]
     call prop_add(line('.'), 0, {'type': s:prop_type, 'text_align': 'below', 'text': l})
   endfor
@@ -911,11 +937,24 @@ endfunction
 " simply did nothing, with no hint why. Returns '' when there is nothing
 " wrong to report (a legitimately empty response, e.g. the cursor at the end
 " of a complete file).
+" A gemini candidate blocked by RECITATION/SAFETY legitimately carries no
+" parts -- but reporting nothing made "gemini returned nothing" undiagnosable
+" in the field (2026-08-26). Name the block reason instead of staying silent.
 function! vim_ai_autocomplete#DescribeCompletionFailure(provider, status, raw_output) abort
   let message = vim_ai_autocomplete#ExtractApiErrorMessage(a:raw_output)
   if !empty(message)
     return printf('vim-ai-autocomplete (%s): %s', a:provider, message)
   endif
+  try
+    let data = json_decode(a:raw_output)
+    if type(data) == v:t_dict && type(get(data, 'candidates', v:null)) == v:t_list && !empty(data.candidates)
+      let reason = get(data.candidates[0], 'finishReason', '')
+      if index(['RECITATION', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'], reason) >= 0
+        return printf('vim-ai-autocomplete (%s): suggestion blocked (%s)', a:provider, reason)
+      endif
+    endif
+  catch
+  endtry
   if a:status != 0
     return printf('vim-ai-autocomplete (%s): request failed (exit %d), no detail in the response', a:provider, a:status)
   endif

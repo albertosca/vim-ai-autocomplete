@@ -346,6 +346,55 @@ Execute (UN-021 FamilyHandler: the "anthropic" family returns BuildClaudeCommand
   AssertEqual function('vim_ai_autocomplete#BuildClaudeCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseClaudeResponse'), handler.parse_response
 
+" UN-063: empty first ghost line must not create an inline text prop.
+" Isolated in bare `vim -u NONE`: prop_add with {'text': ''} at end of line
+" renders three U+FFFD on screen -- a Vim rendering bug on our trigger path,
+" since AdjustSuggestionLines produces lines[0] == '' for every python
+" block-opener suggestion. The diamonds the user kept seeing were exactly
+" this, in every model, always in threes.
+Execute (UN-063 ShowSuggestion skips the inline prop when the first line is empty):
+  new
+  call setline(1, 'def fibonacci(n):')
+  call cursor(1, 18)
+  call vim_ai_autocomplete#ShowSuggestion(['', '    pass'])
+  " an empty-text prop is stored by Vim as a control byte (prop_list shows
+  " 'text': '^D') and renders as three U+FFFD -- so the ONLY prop allowed
+  " here is the below-line one carrying the real second line.
+  let props = prop_list(1)
+  AssertEqual 1, len(props), 'exactly one prop: the below-line ghost (no inline empty prop)'
+  AssertEqual '    pass', props[0].text
+  " the below-line ghost still shows, and accept still works with the full lines
+  AssertEqual 1, vim_ai_autocomplete#IsVisible()
+  AssertEqual ['', '    pass'], vim_ai_autocomplete#CurrentSuggestion()
+After:
+  call vim_ai_autocomplete#ClearSuggestion()
+  bdelete!
+
+" UN-062: anthropic thinking disabled + empty-after-sanitize + gemini block
+" reason. claude-sonnet-5 thinks by default and at a real EOF context
+" returned an EMPTY text block 4/4 even with max_tokens 1024; disabling
+" thinking measured 3/3 non-empty and 40% faster (2026-08-26).
+Execute (UN-062a BuildClaudeRequest disables thinking in both request forms):
+  let plain = json_decode(vim_ai_autocomplete#BuildClaudeRequest({'before': 'a', 'after': 'b'}, 'm'))
+  AssertEqual 'disabled', plain.thinking.type
+  let split_req = json_decode(vim_ai_autocomplete#BuildClaudeRequest({'before': "ab\ncd", 'before_tail': 'cd', 'after': ''}, 'm'))
+  AssertEqual 'disabled', split_req.thinking.type
+
+Execute (UN-062b whitespace-only suggestions collapse to no suggestion):
+  let cla = json_encode({'content': [{'type': 'text', 'text': "```\n\n```"}]})
+  AssertEqual [], vim_ai_autocomplete#ParseClaudeResponse(cla)
+  let dsk = json_encode({'choices': [{'message': {'content': "  \n \n"}}]})
+  AssertEqual [], vim_ai_autocomplete#ParseDeepseekResponse(dsk)
+  let ok = json_encode({'choices': [{'message': {'content': "\n    pass"}}]})
+  AssertEqual ['', '    pass'], vim_ai_autocomplete#ParseDeepseekResponse(ok)
+
+Execute (UN-062c DescribeCompletionFailure names a gemini RECITATION block, stays silent on STOP):
+  let blocked = json_encode({'candidates': [{'finishReason': 'RECITATION'}]})
+  let msg = vim_ai_autocomplete#DescribeCompletionFailure('gemini-flash', 0, blocked)
+  Assert msg =~# 'RECITATION'
+  let fine = json_encode({'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': 'x'}]}}]})
+  AssertEqual '', vim_ai_autocomplete#DescribeCompletionFailure('gemini-flash', 0, fine)
+
 " UN-061: markdown fence stripping. Observed live 2026-08-26: claude-haiku
 " wrapped a completion in ```python fences even though the prompt forbids
 " markdown. Unwrap a leading ```lang line and a trailing ``` line; fences in
