@@ -121,8 +121,28 @@ function! vim_ai_autocomplete#BuildGeminiRequest(context) abort
   return json_encode({'contents': [{'parts': [{'text': prompt}]}]})
 endfunction
 
+" Anthropic prefix caching only pays when the prefix repeats byte-for-byte
+" between requests. While typing inside a line, everything ABOVE that line is
+" stable -- so when context.before_tail (the current line's before-part) is
+" present, the request is split into two text blocks: block 1 = instruction +
+" stable before-context, marked cache_control ephemeral (below the model's
+" cacheable minimum Anthropic silently skips it -- no penalty); block 2 = the
+" volatile tail + AFTER. Anthropic concatenates text blocks, so the model
+" sees exactly the same prompt as the single-string form.
 function! vim_ai_autocomplete#BuildClaudeRequest(context, model) abort
-  let prompt = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n" . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
+  let instruction = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n"
+  let tail = get(a:context, 'before_tail', '')
+  if type(tail) == v:t_string && !empty(tail) && len(tail) < len(a:context.before)
+        \ && strpart(a:context.before, len(a:context.before) - len(tail)) ==# tail
+    let stable = strpart(a:context.before, 0, len(a:context.before) - len(tail))
+    let block1 = instruction . stable
+    let block2 = tail . "\n\nAFTER THE CURSOR:\n" . a:context.after
+    return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': [
+          \ {'type': 'text', 'text': block1, 'cache_control': {'type': 'ephemeral'}},
+          \ {'type': 'text', 'text': block2},
+          \ ]}]})
+  endif
+  let prompt = instruction . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after
   return json_encode({'model': a:model, 'max_tokens': 256, 'messages': [{'role': 'user', 'content': prompt}]})
 endfunction
 
@@ -809,13 +829,22 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let handler = vim_ai_autocomplete#FamilyHandler(model.family)
   let api_key = getenv(model.api_key_env)
 
-  let first = max([1, line('.') - 100])
+  " Anchored at line 1 (not a sliding cursor-100 window): prefix caches --
+  " explicit on Anthropic, implicit on Gemini/DeepSeek -- only hit when the
+  " prompt prefix repeats byte-for-byte, and a sliding window changes the
+  " prefix on every new line. The 2000-line cap keeps the per-keystroke
+  " getline+join cheap on huge files (beyond it, back to the window and
+  " caching naturally stops paying).
+  let first = line('.') <= 2000 ? 1 : max([1, line('.') - 100])
   let last = min([line('$'), line('.') + 20])
   let lines_before_full = getline(first, line('.') - 1)
   let lines_after_full = getline(line('.') + 1, last)
   let [lines_before, lines_after] = vim_ai_autocomplete#SplitLinesAtCursor(
         \ lines_before_full, getline('.'), col('.'), lines_after_full)
   let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
+  " the current line's before-part: the volatile half of the Anthropic cache
+  " split (see BuildClaudeRequest); other families ignore it.
+  let context.before_tail = col('.') > 1 ? strpart(getline('.'), 0, col('.') - 1) : ''
 
   let cmd = handler.build_command(context, model.model_id, api_key)
 

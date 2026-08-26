@@ -346,6 +346,32 @@ Execute (UN-021 FamilyHandler: the "anthropic" family returns BuildClaudeCommand
   AssertEqual function('vim_ai_autocomplete#BuildClaudeCommand'), handler.build_command
   AssertEqual function('vim_ai_autocomplete#ParseClaudeResponse'), handler.parse_response
 
+" UN-016a/b: Anthropic prompt caching -- the request is split into two text
+" blocks when context.before_tail is present (block 1 = instruction + stable
+" before-context with cache_control ephemeral; block 2 = current-line tail +
+" AFTER). Anthropic concatenates text blocks, so the model sees the same
+" prompt as the single-string form -- pinned as an invariant.
+
+Execute (UN-016a BuildClaudeRequest: splits into cached + volatile blocks when before_tail is present):
+  let ctx = {'before': "line one\nline two\ncurrent", 'before_tail': 'current', 'after': ')'}
+  let decoded = json_decode(vim_ai_autocomplete#BuildClaudeRequest(ctx, 'claude-sonnet-5'))
+  AssertEqual 2, len(decoded.messages[0].content)
+  AssertEqual 'ephemeral', decoded.messages[0].content[0].cache_control.type
+  Assert !has_key(decoded.messages[0].content[1], 'cache_control')
+  Assert stridx(decoded.messages[0].content[0].text, "line one\nline two\n") >= 0
+  AssertEqual -1, stridx(decoded.messages[0].content[0].text, 'current')
+  AssertEqual 'current', strpart(decoded.messages[0].content[1].text, 0, 7)
+
+Execute (UN-016b BuildClaudeRequest: block concatenation equals the single-string prompt byte for byte):
+  let ctx = {'before': "a\nb\ncur", 'before_tail': 'cur', 'after': 'x'}
+  let plain = json_decode(vim_ai_autocomplete#BuildClaudeRequest({'before': ctx.before, 'after': ctx.after}, 'm'))
+  let split_req = json_decode(vim_ai_autocomplete#BuildClaudeRequest(ctx, 'm'))
+  AssertEqual plain.messages[0].content, split_req.messages[0].content[0].text . split_req.messages[0].content[1].text
+
+Execute (UN-016c BuildClaudeRequest: without before_tail keeps the old single-string content):
+  let decoded = json_decode(vim_ai_autocomplete#BuildClaudeRequest({'before': 'a', 'after': 'b'}, 'm'))
+  AssertEqual v:t_string, type(decoded.messages[0].content)
+
 " UN-021a to UN-021c: deepseek family -- OpenAI-compatible chat completions
 " (POST https://api.deepseek.com/chat/completions, Authorization: Bearer,
 " body {model, messages: [{role: 'user', content}]}, response

@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **199 tests, no network required** — 102 vader (Vim) + 97 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **206 tests, no network required** — 105 vader (Vim) + 101 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
@@ -116,6 +116,7 @@ If you configure nothing, it defaults to one Gemini and one Claude model. A mode
 - **FIM (fill-in-the-middle) prompting**: the buffer around the cursor is split into a "before" and "after" section (never sending the current line whole to either side), so the model knows exactly where the cursor sits and what already exists after it.
 - **Redundancy detection**: two mechanisms, summed into one count of "characters to discard" from the real buffer text after the cursor — a structural bracket/quote-stack comparison (catches the case where the suggestion closes something already open before the cursor) and a textual suffix/prefix overlap check (catches the model literally repeating what's already there). The discarded span is always shown in red/strikethrough before being dropped on accept, never silently trimmed.
 - **Ghost text rendering**: Vim uses `prop_add`/textprop (Vim 9+); Neovim uses extmarks (`nvim_buf_set_extmark` with `virt_text`/`virt_lines`).
+- **Prompt-cache-friendly by construction**: the before-context is anchored (not a sliding window) so the prompt prefix repeats byte-for-byte between keystrokes — Gemini and DeepSeek cache it implicitly, and the Anthropic request marks the stable block with `cache_control` (measured live: 2,876 of 2,895 input tokens read from cache at 0.1× while typing inside a line).
 - **Context enrichment (Neovim only)**: the buffer cut is Treesitter-scope-aware (uses the enclosing function/class instead of a naive line count) when a parser is available, falling back to the naive cut otherwise; a short-timeout (150ms) LSP `textDocument/definition` lookup optionally appends real cross-file definitions for symbols in scope.
 
 ## Contributing

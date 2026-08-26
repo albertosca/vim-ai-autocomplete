@@ -78,13 +78,22 @@ function M.request_completion()
   local cur_lnum = vim.fn.line('.')
   local cur_col = vim.fn.col('.')
   local scope_start = context_mod.treesitter_scope_start_line(bufnr_now, cur_lnum, cur_col)
-  local first = scope_start or math.max(1, cur_lnum - 100)
+  -- Anchored at line 1 (not a sliding cursor-100 window): prefix caches --
+  -- explicit on Anthropic, implicit on Gemini/DeepSeek -- only hit when the
+  -- prompt prefix repeats byte-for-byte, and a sliding window changes the
+  -- prefix on every new line. The 2000-line cap keeps the per-keystroke
+  -- getline+join cheap on huge files (beyond it, back to the window and
+  -- caching naturally stops paying).
+  local first = scope_start or ((cur_lnum <= 2000) and 1 or math.max(1, cur_lnum - 100))
   local last = math.min(vim.fn.line('$'), cur_lnum + 20)
   local lines_before_full = vim.fn.getline(first, cur_lnum - 1)
   local lines_after_full = vim.fn.getline(cur_lnum + 1, last)
   local lines_before, lines_after = context_mod.split_lines_at_cursor(
     lines_before_full, vim.fn.getline('.'), cur_col, lines_after_full)
   local context = context_mod.build_context(lines_before, lines_after, 16000)
+  -- the current line's before-part: the volatile half of the Anthropic
+  -- cache split (see family.build_claude_request); other families ignore it.
+  context.before_tail = cur_col > 1 and vim.fn.getline('.'):sub(1, cur_col - 1) or ''
   -- capture the RAW after (from the buffer) BEFORE any LSP augmentation --
   -- redundancy.count_redundant_after_chars/compute_text_overlap_length in
   -- on_exit need the real text after the cursor, not the prompt context (the

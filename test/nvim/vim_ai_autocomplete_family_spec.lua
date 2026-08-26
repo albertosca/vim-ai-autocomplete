@@ -108,6 +108,45 @@ describe("vim-ai-autocomplete.family.parse_deepseek_response", function()
   end)
 end)
 
+describe("vim-ai-autocomplete.family.build_claude_request prompt caching", function()
+  -- Anthropic prefix caching only pays when the prefix repeats byte-for-byte
+  -- between requests. While typing inside a line, everything ABOVE that line
+  -- is stable -- so the request is split into two text blocks: block 1 =
+  -- instruction + stable before-context, marked cache_control ephemeral;
+  -- block 2 = the current line's before-part + AFTER. Anthropic concatenates
+  -- text blocks, so the model sees the exact same prompt as the single-string
+  -- form -- pinned below as an invariant.
+  it("splits into two blocks with cache_control when before_tail is present", function()
+    local ctx = { before = 'line one\nline two\ncurrent', before_tail = 'current', after = ')' }
+    local body = vim.json.decode(family.build_claude_request(ctx, 'claude-sonnet-5'))
+    assert.are.equal(2, #body.messages[1].content)
+    local b1, b2 = body.messages[1].content[1], body.messages[1].content[2]
+    assert.are.equal('ephemeral', b1.cache_control.type)
+    assert.is_nil(b2.cache_control)
+    -- stable block ends right where the current line begins
+    assert.is_not_nil(b1.text:find('line one\nline two\n', 1, true))
+    assert.is_nil(b1.text:find('current', 1, true))
+    assert.are.equal('current', b2.text:sub(1, 7))
+  end)
+
+  it("INVARIANT: block concatenation equals the single-string prompt byte for byte", function()
+    local ctx = { before = 'a\nb\ncur', before_tail = 'cur', after = 'x' }
+    local plain = vim.json.decode(family.build_claude_request({ before = ctx.before, after = ctx.after }, 'm'))
+    local split = vim.json.decode(family.build_claude_request(ctx, 'm'))
+    assert.are.equal(plain.messages[1].content, split.messages[1].content[1].text .. split.messages[1].content[2].text)
+  end)
+
+  it("without before_tail keeps the old single-string content", function()
+    local body = vim.json.decode(family.build_claude_request({ before = 'a', after = 'b' }, 'm'))
+    assert.are.equal('string', type(body.messages[1].content))
+  end)
+
+  it("before_tail equal to the whole before -> falls back to single string (nothing stable to cache)", function()
+    local body = vim.json.decode(family.build_claude_request({ before = 'cur', before_tail = 'cur', after = '' }, 'm'))
+    assert.are.equal('string', type(body.messages[1].content))
+  end)
+end)
+
 describe("vim-ai-autocomplete.family.family_handler", function()
   it("gemini: build_command builds the right curl", function()
     local handler = family.family_handler('gemini')

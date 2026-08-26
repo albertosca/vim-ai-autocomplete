@@ -22,7 +22,34 @@ function M.build_gemini_request(context)
   return vim.json.encode({ contents = { { parts = { { text = prompt } } } } })
 end
 
+-- Anthropic prefix caching only pays when the prefix repeats byte-for-byte
+-- between requests. While typing inside a line, everything ABOVE that line is
+-- stable -- so when context.before_tail (the current line's before-part) is
+-- present, the request is split into two text blocks: block 1 = instruction +
+-- stable before-context, marked cache_control ephemeral (below the model's
+-- cacheable minimum Anthropic silently skips it -- no penalty); block 2 = the
+-- volatile tail + AFTER. Anthropic concatenates text blocks, so the model
+-- sees exactly the same prompt as the single-string form.
 function M.build_claude_request(context, model)
+  local tail = context.before_tail
+  if type(tail) == 'string' and tail ~= '' and #tail < #context.before
+      and context.before:sub(-#tail) == tail then
+    local stable = context.before:sub(1, #context.before - #tail)
+    local head = string.format(PROMPT_TEMPLATE, stable, '')
+    -- PROMPT_TEMPLATE ends with the AFTER section; rebuild the two halves
+    -- around the split point instead, keeping concatenation byte-identical.
+    local full = string.format(PROMPT_TEMPLATE, context.before, context.after)
+    local block1 = full:sub(1, #head - #('\n\nAFTER THE CURSOR:\n'))
+    local block2 = full:sub(#block1 + 1)
+    return vim.json.encode({
+      model = model,
+      max_tokens = 256,
+      messages = { { role = 'user', content = {
+        { type = 'text', text = block1, cache_control = { type = 'ephemeral' } },
+        { type = 'text', text = block2 },
+      } } },
+    })
+  end
   local prompt = string.format(PROMPT_TEMPLATE, context.before, context.after)
   return vim.json.encode({ model = model, max_tokens = 256, messages = { { role = 'user', content = prompt } } })
 end

@@ -15,7 +15,7 @@ Autocomplete de IA via ghost-text para Vim 9+ e Neovim, com round-robin plugáve
 ## Por baixo do capô
 
 - **Duas implementações nativas em paridade de comportamento** — Vimscript puro (textprops do Vim 9) e Lua puro (extmarks do Neovim), sem camada de compatibilidade, cada uma idiomática ao seu editor.
-- **199 testes, sem precisar de rede** — 102 vader (Vim) + 97 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
+- **206 testes, sem precisar de rede** — 105 vader (Vim) + 101 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
 - **Prompt FIM com detecção de redundância** — o modelo sabe o que existe depois do cursor, e qualquer coisa que ele repita (um fecha-parênteses que o auto-pairs já inseriu, um sufixo duplicado) é detectada estruturalmente, exibida riscada, e descartada ao aceitar — nunca silenciosamente.
 - **Falha suave** — resposta malformada, candidate bloqueado por filtro e erro de billing viram um aviso único, nunca stack trace no meio da digitação.
 
@@ -116,6 +116,7 @@ Se você não configurar nada, o default é um modelo Gemini e um Claude. Um mod
 - **Prompting FIM (fill-in-the-middle)**: o buffer ao redor do cursor é dividido numa seção "antes" e "depois" (nunca enviando a linha atual inteira pra nenhum dos dois lados), pra o modelo saber exatamente onde o cursor está e o que já existe depois dele.
 - **Detecção de redundância**: dois mecanismos, somados numa única contagem de "caracteres a descartar" do texto real do buffer depois do cursor — uma comparação estrutural de pilha de parênteses/aspas (pega o caso em que a sugestão fecha algo que já estava aberto antes do cursor) e uma checagem textual de overlap de sufixo/prefixo (pega o caso em que o modelo literalmente repete o que já está ali). O trecho descartado é sempre mostrado em vermelho/riscado antes de ser removido no accept, nunca cortado silenciosamente.
 - **Renderização do ghost text**: no Vim usa `prop_add`/textprop (Vim 9+); no Neovim usa extmarks (`nvim_buf_set_extmark` com `virt_text`/`virt_lines`).
+- **Amigável a prompt caching por construção**: o contexto "antes" é ancorado (não é janela deslizante), então o prefixo do prompt se repete byte a byte entre teclas — Gemini e DeepSeek cacheiam implicitamente, e o request da Anthropic marca o bloco estável com `cache_control` (medido ao vivo: 2.876 de 2.895 tokens de input lidos do cache a 0,1× digitando dentro de uma linha).
 - **Enriquecimento de contexto (só Neovim)**: o corte do buffer é sensível ao escopo do Treesitter (usa a função/classe que envolve o cursor em vez de uma contagem ingênua de linhas) quando há um parser disponível, caindo pro corte ingênuo caso contrário; uma consulta LSP `textDocument/definition` com timeout curto (150ms) opcionalmente acrescenta definições reais entre arquivos para símbolos em escopo.
 
 ## Contribuindo
