@@ -183,3 +183,49 @@ describe("vim-ai-autocomplete.redundancy.split_display_tail", function()
     end
   end)
 end)
+
+describe("vim-ai-autocomplete.redundancy.strip_leading_indent_overlap", function()
+  -- Field report 2026-08-27 (reproduced 3/3 with real deepseek calls): the
+  -- user indents by hand, waits, and the model returns its own indentation on
+  -- top -- 4 typed spaces plus 4 suggested spaces became 8. The symmetric
+  -- counterpart of compute_text_overlap_length: that one catches the model
+  -- repeating what comes AFTER the cursor, this one what comes BEFORE.
+  -- Deliberately limited to whitespace: stripping real code would be a
+  -- guess, and a wrong guess deletes the user's characters.
+  it("strips the indentation the user already typed", function()
+    local lines = redundancy.strip_leading_indent_overlap({ '    if n <= 1:', '        return n' }, '    ')
+    assert.are.same({ 'if n <= 1:', '        return n' }, lines)
+  end)
+
+  it("strips only as much as the user typed (user 2, model 4 -> 2 left)", function()
+    local lines = redundancy.strip_leading_indent_overlap({ '    deeper', 'x' }, '  ')
+    assert.are.same({ '  deeper', 'x' }, lines)
+  end)
+
+  it("model indents less than the user typed -> strips what there is", function()
+    local lines = redundancy.strip_leading_indent_overlap({ '  short' }, '    ')
+    assert.are.same({ 'short' }, lines)
+  end)
+
+  it("before_tail with real code is left alone (never delete user characters)", function()
+    local lines = redundancy.strip_leading_indent_overlap({ '    if x:' }, '    if ' )
+    assert.are.same({ '    if x:' }, lines)
+  end)
+
+  it("empty before_tail -> untouched", function()
+    assert.are.same({ '    body' }, redundancy.strip_leading_indent_overlap({ '    body' }, ''))
+  end)
+
+  it("suggestion first line has no leading whitespace -> untouched", function()
+    assert.are.same({ 'code' }, redundancy.strip_leading_indent_overlap({ 'code' }, '    '))
+  end)
+
+  it("empty lines -> untouched", function()
+    assert.are.same({}, redundancy.strip_leading_indent_overlap({}, '    '))
+  end)
+
+  it("tabs count as characters like spaces", function()
+    local lines = redundancy.strip_leading_indent_overlap({ '\t\tbody' }, '\t')
+    assert.are.same({ '\tbody' }, lines)
+  end)
+end)

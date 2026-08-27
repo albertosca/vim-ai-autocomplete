@@ -45,6 +45,9 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
     -- existing lines).
     local current_line_remainder = current_line:sub(col)
     redundant_after = math.min(redundant_after, #current_line_remainder)
+    -- before adjust_suggestion_lines: this one works on the raw model output,
+    -- which is where the duplicated indentation lives.
+    lines = redundancy.strip_leading_indent_overlap(lines, before_cursor)
     lines = redundancy.adjust_suggestion_lines(lines, before_cursor, vim.bo.filetype, vim.fn.shiftwidth(), vim.bo.expandtab)
     -- last, with the lines already in the final shape that reaches the
     -- screen: drop from the suggestion the closing characters the buffer

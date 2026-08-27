@@ -532,6 +532,31 @@ function! vim_ai_autocomplete#ParseDeepseekResponse(body) abort
   return s:SplitSuggestion(message.content)
 endfunction
 
+" Symmetric counterpart of ComputeTextOverlapLength: that one catches the
+" model repeating what comes AFTER the cursor, this one what comes BEFORE.
+" Field report 2026-08-27 (reproduced 3/3 with real deepseek calls): the user
+" indents by hand, waits, and the model returns its own indentation on top --
+" 4 typed spaces plus 4 suggested spaces became 8.
+"
+" Deliberately limited to whitespace-only before_tail: stripping real code
+" would be a guess, and a wrong guess deletes the user's own characters. At
+" most len(before_tail) characters come off, so a deeper suggested indent
+" keeps the extra levels (user 2 + model 4 -> 2 remain, total 4).
+function! vim_ai_autocomplete#StripLeadingIndentOverlap(lines, before_tail) abort
+  if empty(a:lines) || type(a:before_tail) != v:t_string || empty(a:before_tail)
+        \ || a:before_tail =~# '\S'
+    return a:lines
+  endif
+  let leading = matchstr(a:lines[0], '^\s*')
+  let strip = min([len(leading), len(a:before_tail)])
+  if strip == 0
+    return a:lines
+  endif
+  let result = copy(a:lines)
+  let result[0] = strpart(a:lines[0], strip)
+  return result
+endfunction
+
 " Some models (confirmed with gemini-3.1-flash-lite, reproducible 3/3
 " real calls) treat the response as a literal continuation of bytes: when the
 " context ends in ":" (a Python block opener), the first line of the
@@ -1020,6 +1045,9 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
     " several existing lines) -- known scope, not covered.
     let current_line_remainder = strpart(current_line, a:col - 1)
     let redundant_after = min([redundant_after, len(current_line_remainder)])
+    " before AdjustSuggestionLines: this one works on the raw model output,
+    " which is where the duplicated indentation lives.
+    let lines = vim_ai_autocomplete#StripLeadingIndentOverlap(lines, before_cursor)
     let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
     " last, with the lines already in the final shape that reaches the screen:
     " drop from the suggestion the closing characters the buffer already has,

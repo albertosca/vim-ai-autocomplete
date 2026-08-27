@@ -693,3 +693,18 @@ Execute (UN-057 CountRedundantAfterChars: "after" is not really an empty pair (t
 
 Execute (UN-058 CountRedundantAfterChars: the suggestion does not use that kind of bracket -> plays it safe, returns 0):
   AssertEqual 0, vim_ai_autocomplete#CountRedundantAfterChars('def quicksort', 'pass', '()')
+
+" UN-064: StripLeadingIndentOverlap. Field report 2026-08-27 (reproduced 3/3
+" with real deepseek calls): the user indents by hand, waits, and the model
+" returns its own indentation on top -- 4 typed spaces plus 4 suggested
+" became 8. Symmetric counterpart of ComputeTextOverlapLength (which catches
+" repetition of what comes AFTER). Whitespace only: stripping real code
+" would be a guess, and a wrong guess deletes the user's characters.
+Execute (UN-064 StripLeadingIndentOverlap removes indentation the user already typed):
+  AssertEqual ['if n <= 1:', '        return n'], vim_ai_autocomplete#StripLeadingIndentOverlap(['    if n <= 1:', '        return n'], '    ')
+  AssertEqual ['  deeper', 'x'], vim_ai_autocomplete#StripLeadingIndentOverlap(['    deeper', 'x'], '  ')
+  AssertEqual ['short'], vim_ai_autocomplete#StripLeadingIndentOverlap(['  short'], '    ')
+  AssertEqual ['    if x:'], vim_ai_autocomplete#StripLeadingIndentOverlap(['    if x:'], '    if ')
+  AssertEqual ['    body'], vim_ai_autocomplete#StripLeadingIndentOverlap(['    body'], '')
+  AssertEqual ['code'], vim_ai_autocomplete#StripLeadingIndentOverlap(['code'], '    ')
+  AssertEqual [], vim_ai_autocomplete#StripLeadingIndentOverlap([], '    ')

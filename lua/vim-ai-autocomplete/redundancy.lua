@@ -141,6 +141,31 @@ function M.split_display_tail(lines, after_text, redundant_after)
   return lines, redundant_after
 end
 
+-- Symmetric counterpart of compute_text_overlap_length: that one catches the
+-- model repeating what comes AFTER the cursor, this one what comes BEFORE.
+-- Field report 2026-08-27 (reproduced 3/3 with real deepseek calls): the user
+-- indents by hand, waits, and the model returns its own indentation on top --
+-- 4 typed spaces plus 4 suggested spaces became 8.
+--
+-- Deliberately limited to whitespace-only before_tail: stripping real code
+-- would be a guess, and a wrong guess deletes the user's own characters. At
+-- most #before_tail characters come off, so a deeper suggested indent keeps
+-- the extra levels (user 2 + model 4 -> 2 remain, total 4).
+function M.strip_leading_indent_overlap(lines, before_tail)
+  if #lines == 0 or type(before_tail) ~= 'string' or before_tail == ''
+      or before_tail:match('%S') then
+    return lines
+  end
+  local leading = lines[1]:match('^%s*')
+  local strip = math.min(#leading, #before_tail)
+  if strip == 0 then
+    return lines
+  end
+  local result = vim.deepcopy(lines)
+  result[1] = lines[1]:sub(strip + 1)
+  return result
+end
+
 -- Some models treat the response as a literal continuation of bytes: when the
 -- context ends in ":" (a Python block opener), the first line of the
 -- suggestion comes with no line break and no indentation of its own -- same
