@@ -80,7 +80,16 @@ function M.request_completion()
   local bufnr_now = vim.api.nvim_get_current_buf()
   local cur_lnum = vim.fn.line('.')
   local cur_col = vim.fn.col('.')
+  local scope_window_start = math.max(1, cur_lnum - 500)
+  local scope_window = vim.fn.getline(scope_window_start, cur_lnum)
   local scope_start = context_mod.treesitter_scope_start_line(bufnr_now, cur_lnum, cur_col)
+  if not scope_start then
+    -- Treesitter returns nil on an incomplete line, which is the only kind of
+    -- line this plugin ever runs on -- without this fallback the cut silently
+    -- never happened while typing (measured 2026-08-31).
+    local idx = context_mod.heuristic_scope_start_line(scope_window)
+    scope_start = idx > 0 and (scope_window_start + idx - 1) or nil
+  end
   -- Anchored at line 1 (not a sliding cursor-100 window): prefix caches --
   -- explicit on Anthropic, implicit on Gemini/DeepSeek -- only hit when the
   -- prompt prefix repeats byte-for-byte, and a sliding window changes the
@@ -104,11 +113,21 @@ function M.request_completion()
   -- request.
   local after = context.after
 
+  local section = ''
   local ok_node, scope_node = pcall(vim.treesitter.get_node, { bufnr = bufnr_now, pos = { cur_lnum - 1, math.max(0, cur_col - 1) } })
   if ok_node and scope_node then
     local definitions = context_mod.lsp_related_definitions(bufnr_now, scope_node, 150)
-    context.after = context.after .. context_mod.build_related_definitions_section(definitions, 10)
+    section = context_mod.build_related_definitions_section(definitions, 10)
   end
+  -- No LSP client attached (or it found nothing) and the scope cut still
+  -- happened: without this the buffer's own neighbours are simply lost, which
+  -- measured 0/6 against 6/6 on completing a call to a helper defined earlier
+  -- in the file. Falls back to the same buffer scan the Vim side uses.
+  if section == '' and scope_start then
+    section = context_mod.wrap_related_definitions(
+      context_mod.collect_definitions(scope_window, scope_start - scope_window_start + 1, 3))
+  end
+  context.after = context.after .. section
 
   local cmd = handler.build_command(context, model.model_id, api_key)
 

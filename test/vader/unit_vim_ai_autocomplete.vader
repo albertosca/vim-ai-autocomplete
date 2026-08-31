@@ -717,3 +717,124 @@ Execute (UN-064 StripLeadingIndentOverlap removes indentation the user already t
   AssertEqual ['    body'], vim_ai_autocomplete#StripLeadingIndentOverlap(['    body'], '')
   AssertEqual ['code'], vim_ai_autocomplete#StripLeadingIndentOverlap(['code'], '    ')
   AssertEqual [], vim_ai_autocomplete#StripLeadingIndentOverlap([], '    ')
+
+" UN-065: ScopeStartLine -- the Vim-side answer to Neovim's Treesitter scope
+" cut (issue #5). Measured there: with the whole file as context, claude-haiku
+" completed some OTHER unfinished function 2/3 of the time; with the enclosing
+" scope only, 0/3. Takes the buffer lines from the window start up to and
+" INCLUDING the cursor line (always the last element) and returns the 1-based
+" index of the enclosing definition, or 0 when there is none -- 0 means "keep
+" the current whole-file anchor", so a miss only costs context, never
+" correctness.
+Execute (UN-065a cursor inside a function body -> the def line):
+  let lines = ['import os', '', 'def fibonacci(n):', '    if n <= 1:', '        return n', '    ']
+  AssertEqual 3, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065b cursor ON the block opener itself -> that same line):
+  " the reported failure: cursor at the end of "class Stack:" at end of file
+  let lines = ['# comment', 'def other():', '    pass', '', 'class Stack:']
+  AssertEqual 5, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065c nested method -> the INNERMOST definition, not the class):
+  let lines = ['class Stack:', '    def push(self, item):', '        self.items.append(item)', '        ']
+  AssertEqual 2, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065d top level, no enclosing definition -> 0 (fall back to the anchor)):
+  let lines = ['import os', 'x = 1', 'y = ']
+  AssertEqual 0, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065e blank lines on the way back are skipped):
+  let lines = ['def outer():', '', '', '    body']
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065f a plain block opener is NOT a scope (only definitions are)):
+  " "if" opens a block but is not a definition -- Treesitter does not treat it
+  " as a scope either, so neither do we
+  let lines = ['def f():', '    if cond:', '        ']
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065g recognises other languages: JS, Go, Rust, Elixir, Ruby):
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['function foo() {', '  '])
+  " DOUBLE quotes: "\t" is a real tab; '\t' in single quotes is a backslash
+  " followed by a t, which does not count as indentation
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['func main() {', "\t"])
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['impl Stack {', '    '])
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['defmodule Foo do', '  '])
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['  def bar(x)', '    '])
+
+Execute (UN-065h modifiers before the keyword do not hide the definition):
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['export async function go() {', '  '])
+  AssertEqual 1, vim_ai_autocomplete#ScopeStartLine(['  private static class Inner {', '    '])
+
+Execute (UN-065i a word merely containing a keyword is not a definition):
+  " "defaults" starts with "def" -- must not match
+  let lines = ['defaults = {}', 'x = ']
+  AssertEqual 0, vim_ai_autocomplete#ScopeStartLine(lines)
+
+Execute (UN-065j empty input and single line are harmless):
+  AssertEqual 0, vim_ai_autocomplete#ScopeStartLine([])
+  AssertEqual 0, vim_ai_autocomplete#ScopeStartLine(['x = 1'])
+
+" UN-066: CollectDefinitions -- the other half of the scope cut. Cutting at
+" the enclosing definition also HIDES the rest of the file, and that is a real
+" loss: measured with real claude-haiku calls, completing a call to a helper
+" defined earlier in the file went from 6/6 correct (whole file) to 0/6 (scope
+" only) -- the model reinvented the helper inline instead of calling it.
+" Neovim compensates through LSP (lsp_related_definitions); Vim has no LSP
+" here, so it rebuilds the same section from the buffer itself.
+"
+" Signature PLUS a few body lines, not the signature alone: measured over the
+" two scenarios, signature-only recovered just 3/6 and signature+docstring 1/6,
+" while signature + 3 body lines scored 6/6 -- with the wrong-target rate
+" staying at 0/6, which is what the cut was for.
+Execute (UN-066a collects the definitions that come before the scope):
+  let lines = ['def helper(raw):', '    return raw.strip()', '', 'def target(x):', '    y = ']
+  let defs = vim_ai_autocomplete#CollectDefinitions(lines, 4, 3)
+  AssertEqual 1, len(defs)
+  AssertEqual "def helper(raw):\n    return raw.strip()", defs[0]
+
+Execute (UN-066b the enclosing scope itself is never repeated (it is already in BEFORE)):
+  let lines = ['def a():', '    pass', '', 'def b():', '    ']
+  let defs = vim_ai_autocomplete#CollectDefinitions(lines, 4, 3)
+  AssertEqual 1, len(defs)
+  Assert defs[0] =~# 'def a', 'should carry def a, got: ' . defs[0]
+  Assert defs[0] !~# 'def b', 'must not repeat the enclosing scope'
+
+Execute (UN-066c the body is capped at max_body_lines):
+  let lines = ['def big():', '    one', '    two', '    three', '    four', '', 'def here():', '    ']
+  let defs = vim_ai_autocomplete#CollectDefinitions(lines, 7, 2)
+  AssertEqual "def big():\n    one\n    two", defs[0]
+
+Execute (UN-066d a blank line ends the body before the cap):
+  let lines = ['def small():', '    only', '', 'def here():', '    ']
+  let defs = vim_ai_autocomplete#CollectDefinitions(lines, 4, 5)
+  AssertEqual "def small():\n    only", defs[0]
+
+Execute (UN-066e a following definition ends the body (never swallows the next one)):
+  let lines = ['def a():', '    x = 1', 'def b():', '    y = 2', 'def here():', '    ']
+  let defs = vim_ai_autocomplete#CollectDefinitions(lines, 5, 5)
+  AssertEqual 2, len(defs)
+  AssertEqual "def a():\n    x = 1", defs[0]
+  AssertEqual "def b():\n    y = 2", defs[1]
+
+Execute (UN-066f no enclosing scope (index 0) -> nothing, the whole file is already the context):
+  let lines = ['def a():', '    pass', 'x = ']
+  AssertEqual [], vim_ai_autocomplete#CollectDefinitions(lines, 0, 3)
+
+Execute (UN-066g trailing whitespace is stripped (it only costs tokens)):
+  let lines = ['def a():   ', '    pass  ', '', 'def here():', '    ']
+  let defs = vim_ai_autocomplete#CollectDefinitions(lines, 4, 3)
+  AssertEqual "def a():\n    pass", defs[0]
+
+Execute (UN-066h empty input is harmless):
+  AssertEqual [], vim_ai_autocomplete#CollectDefinitions([], 3, 3)
+
+" UN-067: the section wrapper -- byte-for-byte the same format Neovim builds
+" in context.build_related_definitions_section, so both sides send the model
+" exactly the same prompt (the engine-agnostic invariant).
+Execute (UN-067a formats the section the way the Neovim side does):
+  let out = vim_ai_autocomplete#BuildRelatedDefinitionsSection(['def a():', 'def b():'])
+  AssertEqual "\n\nRELATED DEFINITIONS:\ndef a():\n---\ndef b():", out
+
+Execute (UN-067b nothing to say -> empty string, no dangling header):
+  AssertEqual '', vim_ai_autocomplete#BuildRelatedDefinitionsSection([])

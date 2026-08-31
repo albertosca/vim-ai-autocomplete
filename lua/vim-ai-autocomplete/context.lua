@@ -170,6 +170,88 @@ function M.lsp_related_definitions(bufnr, scope_node, timeout_ms)
   return results
 end
 
+-- Same pattern as the Vim side (autoload/vim_ai_autocomplete.vim), compiled
+-- through vim.regex so both sides match byte-for-byte instead of drifting
+-- through a hand-translated Lua pattern.
+local DEFINITION_PATTERN = [[\v^\s*%(%(export|public|private|protected|internal|static|final|abstract|async|local|pub|open)\s+)*%(def|defp|defmodule|defmacro|class|module|function|func|fn|impl|struct|interface|trait)>]]
+local definition_regex = nil
+
+local function is_definition(line)
+  if not definition_regex then
+    definition_regex = vim.regex(DEFINITION_PATTERN)
+  end
+  return definition_regex:match_str(line) ~= nil
+end
+
+-- Port of ScopeStartLine from the Vim side, used when Treesitter cannot
+-- answer. That is not a rare corner: measured on 2026-08-31, asking for the
+-- scope with the cursor on an INCOMPLETE line -- "cleaned = " with nothing
+-- after it, i.e. the normal state while typing, which is the only state this
+-- plugin ever runs in -- returns nil, while the same line completed
+-- ("cleaned = raw") returns the right scope. The tree has an ERROR node there
+-- and the ancestor walk finds no definition, so the cut silently did not
+-- happen and the whole file went out as context.
+--
+-- Indentation does not care whether the code parses, so the heuristic covers
+-- exactly the case Treesitter drops. Returns a 1-based index into `lines`
+-- (the cursor line is always the last one), or 0 for "no scope found".
+function M.heuristic_scope_start_line(lines)
+  if #lines == 0 then
+    return 0
+  end
+  local last = #lines
+  -- the cursor line itself may BE the definition (cursor at the end of
+  -- "class Stack:") -- that is the innermost scope, nothing to walk back to.
+  if is_definition(lines[last]) then
+    return last
+  end
+  local cursor_indent = #(lines[last]:match('^%s*') or '')
+  for i = last - 1, 1, -1 do
+    local line = lines[i]
+    if not line:match('^%s*$') then
+      local indent = #(line:match('^%s*') or '')
+      if indent < cursor_indent and is_definition(line) then
+        return i
+      end
+    end
+  end
+  return 0
+end
+
+-- The no-LSP fallback for the scope cut, ported from the Vim side. Neovim
+-- compensates for the cut through LSP, but a buffer with no client attached
+-- gets the cut and nothing back -- measured on the Vim side (which had
+-- exactly that shape) as 0/6 on completing a call to a helper defined earlier
+-- in the file, against 6/6 with the neighbours restored. Signature plus a few
+-- body lines, cut at the first blank line or the next definition.
+function M.collect_definitions(lines, scope_idx, max_body_lines)
+  if scope_idx <= 0 or #lines == 0 then
+    return {}
+  end
+  local out = {}
+  -- strictly before the scope line: the enclosing definition is already in
+  -- BEFORE, and repeating it would only spend tokens
+  local limit = scope_idx - 1
+  local i = 1
+  while i <= limit do
+    if is_definition(lines[i]) then
+      local chunk = { (lines[i]:gsub('%s*$', '')) }
+      local j = i + 1
+      while j <= limit and #chunk <= max_body_lines do
+        local line = lines[j]
+        if line:match('^%s*$') or is_definition(line) then
+          break
+        end
+        table.insert(chunk, (line:gsub('%s*$', '')))
+        j = j + 1
+      end
+      table.insert(out, table.concat(chunk, '\n'))
+    end
+    i = i + 1
+  end
+  return out
+end
+
 local function slice_lines(lines, first, last)
   local out = {}
   for i = first, last do
@@ -202,6 +284,13 @@ function M.build_related_definitions_section(definitions, max_lines_per_def)
       end
     end
   end
+  return M.wrap_related_definitions(parts)
+end
+
+-- One place builds the section header, so the LSP path and the buffer
+-- fallback (and the Vim side's BuildRelatedDefinitionsSection) cannot drift
+-- apart in what the model actually reads.
+function M.wrap_related_definitions(parts)
   if #parts == 0 then
     return ''
   end

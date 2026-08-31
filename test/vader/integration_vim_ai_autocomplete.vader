@@ -363,3 +363,67 @@ Execute (IT-013 CompleteModelNames: suggests only active names, filtering by arg
 After:
   unlet g:vim_ai_autocomplete_models
   unlet $IT013_KEY_A
+
+" IT-021 to IT-025: BuildRequestContext against a REAL buffer -- the wiring,
+" not the pure functions (those are UN-065/066/067). Extracted from
+" RequestCompletion precisely so this path could be tested without a network
+" call: a fix that lands in a function nobody calls is the silent kind of
+" regression, and the unit tests alone would still be green.
+"
+" virtualedit=onemore because the plugin only ever runs in INSERT mode, where
+" the cursor legitimately sits one past the last character. In normal mode
+" cursor() clamps to the last char, and the context would silently lose it
+" (that clamp is what first made IT-025 fail: no ":" in "class Stack:").
+" Vader's After: is sticky -- it applies to the blocks that FOLLOW it -- so it
+" is declared once here, before the group.
+After:
+  bwipeout!
+
+Execute (IT-021 the context starts at the enclosing definition, not at line 1):
+  new
+  setlocal virtualedit=onemore
+  call setline(1, ['import os', '', 'def helper(raw):', '    return raw.strip()', '', 'class Registry:', '    def slugify(self, raw):', '        cleaned = '])
+  call cursor(8, len(getline(8)) + 1)
+  let ctx = vim_ai_autocomplete#BuildRequestContext()
+  Assert ctx.before =~# 'def slugify', 'the enclosing definition should open the context'
+  Assert ctx.before !~# 'import os', 'the whole file should NOT come along -- that is the cut'
+
+Execute (IT-022 the neighbours the cut hid come back as RELATED DEFINITIONS):
+  new
+  setlocal virtualedit=onemore
+  call setline(1, ['import os', '', 'def helper(raw):', '    return raw.strip()', '', 'class Registry:', '    def slugify(self, raw):', '        cleaned = '])
+  call cursor(8, len(getline(8)) + 1)
+  let ctx = vim_ai_autocomplete#BuildRequestContext()
+  Assert ctx.after =~# 'RELATED DEFINITIONS:', 'the section should be there'
+  Assert ctx.after =~# 'def helper(raw):', 'the helper hidden by the cut should come back'
+  Assert ctx.after =~# 'return raw.strip()', 'with a few body lines, not the signature alone'
+
+Execute (IT-023 raw_after carries the buffer text only -- never the prompt section):
+  " s:OnExit measures redundancy against raw_after: if the section leaked into
+  " it, CountRedundantAfterChars would believe the buffer holds text it does not.
+  new
+  setlocal virtualedit=onemore
+  call setline(1, ['def helper(raw):', '    return raw.strip()', '', 'def slugify(raw):', '    return helper('])
+  call cursor(5, len(getline(5)) + 1)
+  let ctx = vim_ai_autocomplete#BuildRequestContext()
+  Assert ctx.raw_after !~# 'RELATED DEFINITIONS', 'raw_after must stay raw'
+  Assert ctx.after =~# 'RELATED DEFINITIONS', 'while the prompt context does carry it'
+
+Execute (IT-024 a file with no definitions at all keeps the old whole-file anchor):
+  new
+  setlocal virtualedit=onemore
+  call setline(1, ['# notes', '', 'some prose', 'more prose'])
+  call cursor(4, len(getline(4)) + 1)
+  let ctx = vim_ai_autocomplete#BuildRequestContext()
+  Assert ctx.before =~# '# notes', 'with no scope found the anchor stands, whole file as before'
+  Assert ctx.after !~# 'RELATED DEFINITIONS', 'and no dangling section header'
+
+Execute (IT-025 cursor ON the definition line -- the reported end-of-file failure):
+  new
+  setlocal virtualedit=onemore
+  call setline(1, ['def add(a, b):', '    return a + b', '', 'class Stack:'])
+  call cursor(4, len(getline(4)) + 1)
+  let ctx = vim_ai_autocomplete#BuildRequestContext()
+  Assert ctx.before =~# 'class Stack:', 'the definition under the cursor is the scope'
+  Assert ctx.before !~# 'def add', 'the unfinished neighbour must not be in BEFORE -- that is what pulled haiku to the wrong target'
+  Assert ctx.after =~# 'def add(a, b):', 'it comes back as a related definition instead'

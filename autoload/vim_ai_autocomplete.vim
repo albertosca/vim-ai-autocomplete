@@ -75,6 +75,146 @@ function! vim_ai_autocomplete#ResolveDefaultModel(all_models, active_models) abo
   return [a:active_models[0].name, v:null, v:null]
 endfunction
 
+" The Vim-side answer to Neovim's Treesitter scope cut (issue #5). Measured
+" there: feeding the whole file as context made claude-haiku complete some
+" OTHER unfinished function 2/3 of the time, while the enclosing scope alone
+" gave 0/3 -- the extra context is noise, and the weaker the model the harder
+" it is pulled toward the first unfinished thing it sees.
+"
+" Deliberately a heuristic, not a parser: walk backwards for the nearest line
+" that both looks like a DEFINITION and is indented less than the cursor line
+" (or the cursor line itself, when the cursor sits on the definition -- which
+" is exactly the reported failure, "class Stack:" at end of file). Returns 0
+" when nothing matches, and 0 means "keep the whole-file anchor", so a miss
+" only ever costs context, never correctness.
+"
+" Only definitions count, never a plain block opener: `if cond:` opens a block
+" but Treesitter does not treat it as a scope, so neither do we.
+let s:definition_pattern = '\v^\s*%(%(export|public|private|protected|internal|static|final|abstract|async|local|pub|open)\s+)*%(def|defp|defmodule|defmacro|class|module|function|func|fn|impl|struct|interface|trait)>'
+
+function! vim_ai_autocomplete#ScopeStartLine(lines) abort
+  if len(a:lines) == 0
+    return 0
+  endif
+  let last = len(a:lines)
+  " the cursor line itself may BE the definition (cursor at the end of
+  " "class Stack:") -- that is the innermost scope, nothing to walk back to.
+  if a:lines[last - 1] =~# s:definition_pattern
+    return last
+  endif
+  let cursor_indent = strlen(matchstr(a:lines[last - 1], '^\s*'))
+  let i = last - 1
+  while i >= 1
+    let line = a:lines[i - 1]
+    if line !~# '^\s*$'
+      let line_indent = strlen(matchstr(line, '^\s*'))
+      if line_indent < cursor_indent && line =~# s:definition_pattern
+        return i
+      endif
+    endif
+    let i -= 1
+  endwhile
+  return 0
+endfunction
+
+" The other half of the scope cut. Cutting at the enclosing definition also
+" HIDES the rest of the file, and that is a real loss: measured with real
+" claude-haiku calls, completing a call to a helper defined earlier in the
+" file went from 6/6 correct (whole file) to 0/6 (scope only) -- the model
+" reinvented the helper inline instead of calling it. Neovim compensates
+" through LSP (context.lsp_related_definitions); Vim has no LSP here, so it
+" rebuilds the same section from the buffer itself.
+"
+" Signature PLUS a few body lines, not the signature alone: measured over both
+" scenarios, signature-only recovered just 3/6 and signature+docstring 1/6,
+" while signature + 3 body lines scored 6/6 -- with the wrong-target rate
+" staying at 0/6, which is what the cut was for. Bodies are cut at the first
+" blank line or the next definition, so no unfinished body ever arrives whole
+" enough to look like the thing being asked for.
+function! vim_ai_autocomplete#CollectDefinitions(lines, scope_idx, max_body_lines) abort
+  if a:scope_idx <= 0 || len(a:lines) == 0
+    return []
+  endif
+  let out = []
+  " strictly before the scope line: the enclosing definition itself is already
+  " in BEFORE, and repeating it would only spend tokens
+  let limit = a:scope_idx - 1
+  let i = 0
+  while i < limit
+    if a:lines[i] =~# s:definition_pattern
+      let chunk = [substitute(a:lines[i], '\s*$', '', '')]
+      let j = i + 1
+      while j < limit && len(chunk) <= a:max_body_lines
+        let line = a:lines[j]
+        if line =~# '^\s*$' || line =~# s:definition_pattern
+          break
+        endif
+        call add(chunk, substitute(line, '\s*$', '', ''))
+        let j += 1
+      endwhile
+      call add(out, join(chunk, "\n"))
+    endif
+    let i += 1
+  endwhile
+  return out
+endfunction
+
+" Byte-for-byte the same format Neovim builds in
+" context.build_related_definitions_section, so swapping sides never changes
+" what the model reads.
+function! vim_ai_autocomplete#BuildRelatedDefinitionsSection(definitions) abort
+  if len(a:definitions) == 0
+    return ''
+  endif
+  return "\n\nRELATED DEFINITIONS:\n" . join(a:definitions, "\n---\n")
+endfunction
+
+" Everything that turns the BUFFER into the prompt context, in one place.
+" Extracted from RequestCompletion() so the whole buffer -> prompt path can be
+" tested against a real buffer with no network call -- the pure functions
+" below were already covered, but nothing proved they were WIRED (and a fix
+" that lands in an unwired function is the silent kind of regression).
+"
+" Returns the context the handler gets, plus raw_after: the text after the
+" cursor exactly as it sits in the buffer, BEFORE the related-definitions
+" section is appended. s:OnExit needs that raw form -- feeding it the prompt
+" context instead would make CountRedundantAfterChars believe the buffer holds
+" text it does not.
+function! vim_ai_autocomplete#BuildRequestContext() abort
+  " Anchored at line 1 (not a sliding cursor-100 window): prefix caches --
+  " explicit on Anthropic, implicit on Gemini/DeepSeek -- only hit when the
+  " prompt prefix repeats byte-for-byte, and a sliding window changes the
+  " prefix on every new line. The 2000-line cap keeps the per-keystroke
+  " getline+join cheap on huge files (beyond it, back to the window and
+  " caching naturally stops paying).
+  let anchor = line('.') <= 2000 ? 1 : max([1, line('.') - 100])
+  " Prefer the enclosing definition, mirroring the Treesitter cut on the
+  " Neovim side (issue #5): the whole file is noise, and the weaker the model
+  " the harder it is pulled toward the first unfinished thing it sees.
+  " ScopeStartLine gets a bounded window (500 lines back) so this stays cheap
+  " per keystroke, and returns 0 when it finds nothing -- then the anchor
+  " stands, so a miss only costs context, never correctness.
+  let scope_window_start = max([1, line('.') - 500])
+  let scope_window = getline(scope_window_start, line('.'))
+  let scope_idx = vim_ai_autocomplete#ScopeStartLine(scope_window)
+  let first = scope_idx > 0 ? scope_window_start + scope_idx - 1 : anchor
+  let last = min([line('$'), line('.') + 20])
+  let lines_before_full = getline(first, line('.') - 1)
+  let lines_after_full = getline(line('.') + 1, last)
+  let [lines_before, lines_after] = vim_ai_autocomplete#SplitLinesAtCursor(
+        \ lines_before_full, getline('.'), col('.'), lines_after_full)
+  let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
+  " the current line's before-part: the volatile half of the Anthropic cache
+  " split (see BuildClaudeRequest); other families ignore it.
+  let context.before_tail = col('.') > 1 ? strpart(getline('.'), 0, col('.') - 1) : ''
+  let context.raw_after = context.after
+  " the other half of the scope cut: give back the neighbours the cut hid,
+  " as signature + a few body lines (see CollectDefinitions).
+  let context.after = context.after . vim_ai_autocomplete#BuildRelatedDefinitionsSection(
+        \ vim_ai_autocomplete#CollectDefinitions(scope_window, scope_idx, 3))
+  return context
+endfunction
+
 " The CURRENT line (the one the cursor is really on) should never go in whole
 " into either "before" or "after" -- it has to be split at the cursor column.
 " Real finding (2026-07-20): without this, "def sum(" with the cursor between
@@ -919,23 +1059,10 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let handler = vim_ai_autocomplete#FamilyHandler(model.family)
   let api_key = getenv(model.api_key_env)
 
-  " Anchored at line 1 (not a sliding cursor-100 window): prefix caches --
-  " explicit on Anthropic, implicit on Gemini/DeepSeek -- only hit when the
-  " prompt prefix repeats byte-for-byte, and a sliding window changes the
-  " prefix on every new line. The 2000-line cap keeps the per-keystroke
-  " getline+join cheap on huge files (beyond it, back to the window and
-  " caching naturally stops paying).
-  let first = line('.') <= 2000 ? 1 : max([1, line('.') - 100])
-  let last = min([line('$'), line('.') + 20])
-  let lines_before_full = getline(first, line('.') - 1)
-  let lines_after_full = getline(line('.') + 1, last)
-  let [lines_before, lines_after] = vim_ai_autocomplete#SplitLinesAtCursor(
-        \ lines_before_full, getline('.'), col('.'), lines_after_full)
-  let context = vim_ai_autocomplete#BuildContext(lines_before, lines_after, 16000)
-  " the current line's before-part: the volatile half of the Anthropic cache
-  " split (see BuildClaudeRequest); other families ignore it.
-  let context.before_tail = col('.') > 1 ? strpart(getline('.'), 0, col('.') - 1) : ''
-
+  let context = vim_ai_autocomplete#BuildRequestContext()
+  " raw_after is for s:OnExit, never for the prompt -- pull it out before the
+  " context reaches the handler.
+  let l:after = remove(context, 'raw_after')
   let cmd = handler.build_command(context, model.model_id, api_key)
 
   let s:gen += 1
@@ -946,7 +1073,6 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let l:col = col('.')
   let l:provider = model.name
   let l:ParseResponse = handler.parse_response
-  let l:after = context.after
 
   let opts = {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
@@ -1005,8 +1131,8 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
   endif
   " drop it if the cursor already moved since the request was made (the
   " response arrived too late, the context changed) -- this applies to the
-  " de erro, senao um erro de um request velho poderia aparecer fora de
-  " context after the user has already moved on.
+  " error path as well, otherwise an error from a stale request could surface
+  " out of context after the user has already moved on.
   if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
     return
   endif
