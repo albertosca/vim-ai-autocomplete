@@ -239,6 +239,20 @@ describe("vim-ai-autocomplete.family prompt v2 (tail anchor)", function()
     assert.is_nil(gem.contents[1].parts[1].text:find('exact characters', 1, true))
   end)
 
+  -- Measured on claude-haiku-4-5 at a real "def add(|)" cursor, 8 trials per
+  -- variant out of ten tried: the baseline produced a multi-line completion
+  -- that did NOT close the paren 6/8 (the ")" then gets spliced after the
+  -- whole body), and a concrete worked example brought it to 0/8. Nine other
+  -- phrasings -- splice mechanics, "single line only", a structural hint --
+  -- all did worse. The other three models never had the problem (0/3 each),
+  -- and the example regressed none of them.
+  it("the instruction carries a worked example of writing the closer", function()
+    local ctx = { before = 'a', after = 'b' }
+    local prompt = vim.json.decode(family.build_gemini_request(ctx)).contents[1].parts[1].text
+    assert.is_not_nil(prompt:find('Example:', 1, true))
+    assert.is_not_nil(prompt:find('it writes the closer itself', 1, true))
+  end)
+
   it("the instruction forbids completing other unfinished code", function()
     local ctx = { before = 'a', after = 'b' }
     local gem = vim.json.decode(family.build_gemini_request(ctx))

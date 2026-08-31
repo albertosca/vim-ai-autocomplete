@@ -440,6 +440,15 @@ Execute (UN-006d empty BEFORE -> no anchor line):
   let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest({'before': '', 'after': 'x'}))
   AssertEqual -1, stridx(gem.contents[0].parts[0].text, 'exact characters')
 
+" Measured on claude-haiku-4-5 at a real "def add(|)" cursor, 8 trials per
+" variant out of ten tried: the baseline produced a multi-line completion that
+" did NOT close the paren 6/8 (the ")" then gets spliced after the whole
+" body), and a concrete worked example brought it to 0/8.
+Execute (UN-006g the instruction carries a worked example of writing the closer):
+  let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest({'before': 'a', 'after': 'b'}))
+  Assert stridx(gem.contents[0].parts[0].text, 'Example:') >= 0
+  Assert stridx(gem.contents[0].parts[0].text, 'it writes the closer itself') >= 0
+
 Execute (UN-006e the instruction forbids completing other unfinished code):
   let gem = json_decode(vim_ai_autocomplete#BuildGeminiRequest({'before': 'a', 'after': 'b'}))
   Assert stridx(gem.contents[0].parts[0].text, 'do not complete any other unfinished code') >= 0

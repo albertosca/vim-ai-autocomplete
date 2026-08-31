@@ -118,7 +118,7 @@ endfunction
 " ComputeTextOverlapLength() also exists as a post-processing safety net.
 " One prompt for every family -- swapping engines must never change what the
 " model reads (pinned by the engine-agnostic invariant test UN-006a).
-let s:instruction_head = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER, and do not complete any other unfinished code elsewhere in the file. No explanation, no markdown.\n\nBEFORE THE CURSOR:\n"
+let s:instruction_head = "Complete the following code. The cursor sits between the BEFORE text and the AFTER text, both of which already exist in the buffer. Reply ONLY with the text that should be inserted BETWEEN them -- do not repeat anything already present in BEFORE or AFTER, and do not complete any other unfinished code elsewhere in the file. No explanation, no markdown. Example: for BEFORE ending in \"foo(\" with AFTER \")\", a good reply is \"a, b)\" -- it writes the closer itself.\n\nBEFORE THE CURSOR:\n"
 
 " Field finding 2026-08-26 (reproduced 6/6 with real calls): in a file full of
 " unfinished stubs, with an empty AFTER, every model -- including claude-haiku
