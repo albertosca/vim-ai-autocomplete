@@ -8,6 +8,10 @@ local state = {
   lnum = 0,
   col = 0,
   redundant_after = 0,
+  -- issue #3: the alternatives being cycled through -- a list of
+  -- {lines, redundant_after} entries -- and which one is on screen.
+  alternatives = {},
+  alt_index = 0,
 }
 
 -- A highlight of its OWN for the real redundant character -- red plus
@@ -67,6 +71,8 @@ function M.clear_suggestion()
   state.lnum = 0
   state.col = 0
   state.redundant_after = 0
+  state.alternatives = {}
+  state.alt_index = 0
 end
 
 function M.is_visible()
@@ -79,6 +85,59 @@ end
 
 function M.suggestion_position()
   return state.lnum, state.col
+end
+
+-- issue #3: show a SET of alternatives, starting at the first. Each entry is
+-- {lines, redundant_after}; cycling re-renders another entry at the same
+-- cursor position. show_suggestion stays the single-suggestion primitive (it
+-- clears any alternatives state, so a fresh trigger never leaks stale ones).
+function M.show_alternatives(entries)
+  if #entries == 0 then
+    return
+  end
+  M.show_suggestion(entries[1].lines, entries[1].redundant_after)
+  state.alternatives = vim.deepcopy(entries)
+  state.alt_index = 1
+end
+
+-- Moves delta (+1/-1) through the known alternatives, wrapping at both ends.
+-- Returns the new index, or nil when there is no alternatives state (a plain
+-- single suggestion, or nothing visible) -- the caller decides whether that
+-- means "fetch one lazily" or "nothing to do".
+function M.cycle(delta)
+  if #state.alternatives < 1 or state.alt_index == 0 then
+    return nil
+  end
+  local n = #state.alternatives
+  local index = ((state.alt_index - 1 + delta) % n) + 1
+  local alternatives = state.alternatives
+  local entry = alternatives[index]
+  M.show_suggestion(entry.lines, entry.redundant_after)
+  state.alternatives = alternatives
+  state.alt_index = index
+  return index
+end
+
+-- Appends a lazily fetched entry (the anthropic side of the hybrid) and jumps
+-- to it -- the user pressed "next", so the new entry is what they asked for.
+function M.append_alternative(entry)
+  local alternatives = state.alternatives
+  table.insert(alternatives, vim.deepcopy(entry))
+  M.show_suggestion(entry.lines, entry.redundant_after)
+  state.alternatives = alternatives
+  state.alt_index = #alternatives
+end
+
+function M.alternatives()
+  return vim.deepcopy(state.alternatives)
+end
+
+function M.alternatives_count()
+  return #state.alternatives
+end
+
+function M.alternatives_index()
+  return state.alt_index
 end
 
 function M.insert_accepted_lines(lines, lnum, col, redundant_after)

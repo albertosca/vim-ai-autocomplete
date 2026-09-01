@@ -45,6 +45,10 @@ nnoremap <silent> <leader>pt :call vim_ai_autocomplete#ToggleAutoTrigger()<CR>
 " see vim_ai_autocomplete#Dismiss().
 inoremap <script><silent><expr> <C-]> vim_ai_autocomplete#Dismiss()
 
+" Cycle keys for the alternatives feature (issue #3) -- only claimed when
+" g:vim_ai_autocomplete_alternatives >= 2, see SetupAlternativesKeys().
+call vim_ai_autocomplete#SetupAlternativesKeys()
+
 augroup vim_ai_autocomplete
   autocmd!
   autocmd VimEnter * call vim_ai_autocomplete#SetupTabWrap()

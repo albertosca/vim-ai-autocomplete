@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **297 tests, no network required** — 143 vader (Vim) + 154 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **343 tests, no network required** — 158 vader (Vim) + 185 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
@@ -88,6 +88,7 @@ require('vim-ai-autocomplete').setup({
     { name = 'claude-sonnet', family = 'anthropic', model_id = 'claude-sonnet-5', api_key_env = 'ANTHROPIC_API_KEY' },
   },
   auto_trigger = true, -- optional, defaults to true
+  alternatives = 3, -- optional, defaults to off; see "Alternatives" below
 })
 ```
 
@@ -97,8 +98,33 @@ require('vim-ai-autocomplete').setup({
 | `family` | `'gemini'`, `'anthropic'` or `'deepseek'` — determines the request/response shape |
 | `model_id` | The real model ID sent to the provider's API |
 | `api_key_env` | Name of the environment variable holding that provider's API key |
+| `candidates_per_request` | Optional, default 1 — how many alternatives this model returns per request; see "Alternatives" below before setting it above 1 |
 
 If you configure nothing, it defaults to one Gemini and one Claude model. A model only becomes "active" (eligible for `,pr` cycling) if its `api_key_env` is actually set and non-empty in the environment.
+
+### Alternatives (cycling through several suggestions)
+
+Off by default — every alternative is a paid API call. Turn it on with the number of suggestions you want per trigger:
+
+```vim
+let g:vim_ai_autocomplete_alternatives = 3   " or setup({ alternatives = 3 }) on Neovim
+```
+
+While a suggestion is visible, `<M-.>` (Alt+.) shows the next alternative and `<M-,>` the previous one, wrapping around at both ends; `Tab` accepts whichever is on screen. The keys are only claimed when the feature is on. Each alternative goes through the same post-processing as a single suggestion (bracket redundancy, indent overlap, fence unwrapping), so they behave identically on accept.
+
+**What it costs — measured, not assumed:**
+
+By default every alternative is **one extra request**, fetched lazily: the first trigger gets one suggestion, and each `<M-.>` past the end asks for one more — up to N, and only for what you actually look at. Identical alternatives collapse into one; if a lazy fetch merely repeats the model's previous answer, nothing is added and a short message says so.
+
+Gemini (`candidateCount`) and OpenAI-compatible APIs such as DeepSeek (`n`) have a field to return several candidates in the **same** request, which would make alternatives nearly free — so the plugin supports it as a **per-model opt-in**:
+
+```vim
+let g:vim_ai_autocomplete_models = [
+      \ {'name': 'gemini-flash', 'family': 'gemini', 'model_id': '...', 'api_key_env': 'GEMINI_API_KEY', 'candidates_per_request': 3},
+      \ ]
+```
+
+Opt in only after checking your model accepts it: with real calls on 2026-09-01, `gemini-3.1-flash-lite` answered *"Multiple candidates is not enabled for this model"* and `deepseek-v4-pro` *"Invalid n value (currently only n = 1 is supported)"* — and a model that rejects the field returns **no suggestion at all**, which is why lazy is the default. Anthropic's Messages API has no such field, so it is always lazy.
 
 ## Usage
 
@@ -106,6 +132,7 @@ If you configure nothing, it defaults to one Gemini and one Claude model. A mode
 |---|---|
 | `Tab` | Accept the visible suggestion (falls through to your original `Tab` mapping otherwise) |
 | `<C-]>` | Dismiss the visible suggestion without leaving insert mode |
+| `<M-.>` / `<M-,>` | Next / previous alternative — only with `g:vim_ai_autocomplete_alternatives >= 2` (see Configuration) |
 | `,pt` | Toggle auto-trigger on/off |
 | `,pr` | Cycle to the next active model (only registered with 2+ active models) |
 | `,pm` | Pick a model from a floating menu (`j`/`k` to move, `<CR>` to select, `<Esc>`/`q` to close) — only registered with 2+ active models |

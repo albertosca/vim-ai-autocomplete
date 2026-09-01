@@ -53,6 +53,9 @@ function M.setup(opts)
   if opts.auto_trigger ~= nil then
     vim.g.vim_ai_autocomplete_auto_trigger = opts.auto_trigger and 1 or 0
   end
+  if opts.alternatives ~= nil then
+    vim.g.vim_ai_autocomplete_alternatives = opts.alternatives
+  end
 
   if vim.g.vim_ai_autocomplete_auto_trigger == nil then
     vim.g.vim_ai_autocomplete_auto_trigger = 1
@@ -60,6 +63,17 @@ function M.setup(opts)
 
   keymaps.setup_tab_wrap()
   vim.keymap.set('i', '<C-]>', keymaps.dismiss, { expr = true, silent = true, desc = 'vim-ai-autocomplete: dismiss suggestion' })
+
+  -- issue #3: alternatives are off by default (each one is a paid call), and
+  -- the cycle keys are only claimed when the feature is on -- <M-.>/<M-,>
+  -- stay untouched otherwise.
+  local alternatives = vim.g.vim_ai_autocomplete_alternatives
+  if type(alternatives) == 'number' and alternatives >= 2 then
+    vim.keymap.set('i', '<M-.>', function() require('vim-ai-autocomplete.request').cycle_suggestion(1) end,
+      { silent = true, desc = 'vim-ai-autocomplete: next alternative' })
+    vim.keymap.set('i', '<M-,>', function() require('vim-ai-autocomplete.request').cycle_suggestion(-1) end,
+      { silent = true, desc = 'vim-ai-autocomplete: previous alternative' })
+  end
 
   -- ,pt does not depend on an API key (it only toggles the automatic
   -- debounce) -- always registered, unlike ,pr (2+ active models only).

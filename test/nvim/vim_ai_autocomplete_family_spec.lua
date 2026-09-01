@@ -362,3 +362,111 @@ describe("vim-ai-autocomplete.family.describe_completion_failure", function()
     assert.is_nil(family.describe_completion_failure('gemini', 0, ''))
   end)
 end)
+
+describe("vim-ai-autocomplete.family multi-candidate requests (issue #3)", function()
+  -- The hybrid strategy: families whose API returns several completions in
+  -- ONE request (gemini candidateCount, deepseek n) prefetch them there;
+  -- anthropic has no equivalent, so it stays at 1 per request and the
+  -- request layer fetches lazily on cycle. max_candidates_per_request is
+  -- what makes that cost difference visible.
+  local ctx = { before = 'def sum(', after = ')' }
+
+  it("gemini: n >= 2 becomes generationConfig.candidateCount", function()
+    local body = vim.json.decode(family.build_gemini_request(ctx, 3))
+    assert.are.equal(3, body.generationConfig.candidateCount)
+  end)
+
+  it("gemini: n absent or 1 -> no generationConfig at all (request unchanged)", function()
+    assert.is_nil(vim.json.decode(family.build_gemini_request(ctx)).generationConfig)
+    assert.is_nil(vim.json.decode(family.build_gemini_request(ctx, 1)).generationConfig)
+  end)
+
+  it("deepseek: n >= 2 becomes the OpenAI-compatible n field", function()
+    local body = vim.json.decode(family.build_deepseek_request(ctx, 'm', 3))
+    assert.are.equal(3, body.n)
+  end)
+
+  it("deepseek: n absent or 1 -> no n field (request unchanged)", function()
+    assert.is_nil(vim.json.decode(family.build_deepseek_request(ctx, 'm')).n)
+    assert.is_nil(vim.json.decode(family.build_deepseek_request(ctx, 'm', 1)).n)
+  end)
+
+  it("every handler declares max_candidates_per_request: many for gemini/deepseek, 1 for anthropic", function()
+    assert.is_true(family.family_handler('gemini').max_candidates_per_request > 1)
+    assert.is_true(family.family_handler('deepseek').max_candidates_per_request > 1)
+    assert.are.equal(1, family.family_handler('anthropic').max_candidates_per_request)
+  end)
+
+  it("build_command passes n through to the request body", function()
+    local cmd = family.family_handler('gemini').build_command(ctx, 'm', 'k', 3)
+    assert.are.equal(3, vim.json.decode(cmd[#cmd]).generationConfig.candidateCount)
+    local dcmd = family.family_handler('deepseek').build_command(ctx, 'm', 'k', 3)
+    assert.are.equal(3, vim.json.decode(dcmd[#dcmd]).n)
+  end)
+
+  it("anthropic build_command ignores n (no such API field)", function()
+    local cmd = family.family_handler('anthropic').build_command(ctx, 'm', 'k', 3)
+    local body = vim.json.decode(cmd[#cmd])
+    assert.is_nil(body.n)
+    assert.is_nil(body.candidateCount)
+  end)
+end)
+
+describe("vim-ai-autocomplete.family.parse_*_alternatives (issue #3)", function()
+  it("gemini: one line-list per candidate, in order", function()
+    local body = vim.json.encode({ candidates = {
+      { content = { parts = { { text = 'a, b)' } } } },
+      { content = { parts = { { text = '*args)' } } } },
+    } })
+    assert.are.same({ { 'a, b)' }, { '*args)' } }, family.parse_gemini_alternatives(body))
+  end)
+
+  it("gemini: a blocked candidate among the alternatives is skipped, not a crash", function()
+    local body = vim.json.encode({ candidates = {
+      { content = { parts = { { text = 'a, b)' } } } },
+      { finishReason = 'SAFETY' },
+    } })
+    assert.are.same({ { 'a, b)' } }, family.parse_gemini_alternatives(body))
+  end)
+
+  it("deepseek: one line-list per choice", function()
+    local body = vim.json.encode({ choices = {
+      { message = { content = 'a, b)' } },
+      { message = { content = 'x)\n    return x' } },
+    } })
+    assert.are.same({ { 'a, b)' }, { 'x)', '    return x' } }, family.parse_deepseek_alternatives(body))
+  end)
+
+  it("anthropic: always a single-element list (one candidate per request)", function()
+    local body = vim.json.encode({ content = { { type = 'text', text = 'a, b)' } } })
+    assert.are.same({ { 'a, b)' } }, family.parse_claude_alternatives(body))
+  end)
+
+  it("duplicates collapse: two candidates with the same text count once", function()
+    local body = vim.json.encode({ candidates = {
+      { content = { parts = { { text = 'a, b)' } } } },
+      { content = { parts = { { text = 'a, b)' } } } },
+    } })
+    assert.are.same({ { 'a, b)' } }, family.parse_gemini_alternatives(body))
+  end)
+
+  it("a candidate that sanitizes to whitespace is dropped, like in parse_response", function()
+    local body = vim.json.encode({ choices = {
+      { message = { content = '```\n\n```' } },
+      { message = { content = 'real)' } },
+    } })
+    assert.are.same({ { 'real)' } }, family.parse_deepseek_alternatives(body))
+  end)
+
+  it("malformed body -> empty list, never a crash", function()
+    assert.are.same({}, family.parse_gemini_alternatives('not json'))
+    assert.are.same({}, family.parse_deepseek_alternatives('{}'))
+    assert.are.same({}, family.parse_claude_alternatives('{}'))
+  end)
+
+  it("every handler exposes parse_alternatives", function()
+    for _, name in ipairs({ 'gemini', 'deepseek', 'anthropic' }) do
+      assert.are.equal('function', type(family.family_handler(name).parse_alternatives))
+    end
+  end)
+end)

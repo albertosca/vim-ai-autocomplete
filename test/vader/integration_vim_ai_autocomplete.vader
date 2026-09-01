@@ -427,3 +427,23 @@ Execute (IT-025 cursor ON the definition line -- the reported end-of-file failur
   Assert ctx.before =~# 'class Stack:', 'the definition under the cursor is the scope'
   Assert ctx.before !~# 'def add', 'the unfinished neighbour must not be in BEFORE -- that is what pulled haiku to the wrong target'
   Assert ctx.after =~# 'def add(a, b):', 'it comes back as a related definition instead'
+
+" Vader's After: is sticky and applies to the blocks that FOLLOW it -- so this
+" one is declared BEFORE its block (it replaces the bwipeout! of the group
+" above, which would otherwise wipe Vader's own workbench here: E86 when the
+" next file starts).
+After:
+  unlet! g:vim_ai_autocomplete_alternatives
+  silent! iunmap <M-.>
+  silent! iunmap <M-,>
+
+Execute (IT-026 SetupAlternativesKeys claims <M-.>/<M-,> only when the feature is on):
+  silent! iunmap <M-.>
+  silent! iunmap <M-,>
+  let g:vim_ai_autocomplete_alternatives = 0
+  call vim_ai_autocomplete#SetupAlternativesKeys()
+  AssertEqual '', maparg('<M-.>', 'i'), 'feature off: the key stays free'
+  let g:vim_ai_autocomplete_alternatives = 3
+  call vim_ai_autocomplete#SetupAlternativesKeys()
+  Assert maparg('<M-.>', 'i') =~# 'CycleSuggestion(1)', 'next mapped'
+  Assert maparg('<M-,>', 'i') =~# 'CycleSuggestion(-1)', 'previous mapped'

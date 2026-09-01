@@ -838,3 +838,133 @@ Execute (UN-067a formats the section the way the Neovim side does):
 
 Execute (UN-067b nothing to say -> empty string, no dangling header):
   AssertEqual '', vim_ai_autocomplete#BuildRelatedDefinitionsSection([])
+
+" UN-068/069/070: alternatives cycling (issue #3), the Vim mirror of the Lua
+" hybrid strategy. gemini/deepseek ask for N candidates in ONE request
+" (candidateCount / n); anthropic has no such field, stays at 1 per request,
+" and the request layer fetches lazily on cycle. max_candidates_per_request
+" is what makes that cost difference visible.
+Execute (UN-068a BuildGeminiRequest: n >= 2 becomes generationConfig.candidateCount):
+  let ctx = {'before': 'def sum(', 'after': ')'}
+  AssertEqual 3, json_decode(vim_ai_autocomplete#BuildGeminiRequest(ctx, 3)).generationConfig.candidateCount
+
+Execute (UN-068b BuildGeminiRequest: n absent or 1 -> request unchanged, no generationConfig):
+  let ctx = {'before': 'def sum(', 'after': ')'}
+  Assert !has_key(json_decode(vim_ai_autocomplete#BuildGeminiRequest(ctx)), 'generationConfig')
+  Assert !has_key(json_decode(vim_ai_autocomplete#BuildGeminiRequest(ctx, 1)), 'generationConfig')
+
+Execute (UN-068c BuildDeepseekRequest: n >= 2 becomes the OpenAI-compatible n field):
+  let ctx = {'before': 'def sum(', 'after': ')'}
+  AssertEqual 3, json_decode(vim_ai_autocomplete#BuildDeepseekRequest(ctx, 'm', 3)).n
+  Assert !has_key(json_decode(vim_ai_autocomplete#BuildDeepseekRequest(ctx, 'm')), 'n')
+
+Execute (UN-068d every handler declares max_candidates_per_request and parse_alternatives):
+  Assert vim_ai_autocomplete#FamilyHandler('gemini').max_candidates_per_request > 1
+  Assert vim_ai_autocomplete#FamilyHandler('deepseek').max_candidates_per_request > 1
+  AssertEqual 1, vim_ai_autocomplete#FamilyHandler('anthropic').max_candidates_per_request
+  for fam in ['gemini', 'deepseek', 'anthropic']
+    AssertEqual v:t_func, type(vim_ai_autocomplete#FamilyHandler(fam).parse_alternatives)
+  endfor
+
+Execute (UN-068e build_command passes n through; anthropic accepts and ignores it):
+  let ctx = {'before': 'def sum(', 'after': ')'}
+  let g = vim_ai_autocomplete#FamilyHandler('gemini').build_command(ctx, 'm', 'k', 3)
+  AssertEqual 3, json_decode(g[-1]).generationConfig.candidateCount
+  let d = vim_ai_autocomplete#FamilyHandler('deepseek').build_command(ctx, 'm', 'k', 3)
+  AssertEqual 3, json_decode(d[-1]).n
+  let c = vim_ai_autocomplete#FamilyHandler('anthropic').build_command(ctx, 'm', 'k', 3)
+  Assert !has_key(json_decode(c[-1]), 'n')
+
+Execute (UN-069a ParseGeminiAlternatives: one line-list per candidate, blocked ones skipped):
+  let body = json_encode({'candidates': [
+        \ {'content': {'parts': [{'text': 'a, b)'}]}},
+        \ {'finishReason': 'SAFETY'},
+        \ {'content': {'parts': [{'text': '*args)'}]}},
+        \ ]})
+  AssertEqual [['a, b)'], ['*args)']], vim_ai_autocomplete#ParseGeminiAlternatives(body)
+
+Execute (UN-069b ParseDeepseekAlternatives: one line-list per choice, whitespace-only dropped):
+  let body = json_encode({'choices': [
+        \ {'message': {'content': "```\n\n```"}},
+        \ {'message': {'content': "x)\n    return x"}},
+        \ ]})
+  AssertEqual [['x)', '    return x']], vim_ai_autocomplete#ParseDeepseekAlternatives(body)
+
+Execute (UN-069c ParseClaudeAlternatives: always a single-element list):
+  let body = json_encode({'content': [{'type': 'text', 'text': 'a, b)'}]})
+  AssertEqual [['a, b)']], vim_ai_autocomplete#ParseClaudeAlternatives(body)
+
+Execute (UN-069d duplicates collapse and malformed bodies give an empty list):
+  let body = json_encode({'candidates': [
+        \ {'content': {'parts': [{'text': 'same)'}]}},
+        \ {'content': {'parts': [{'text': 'same)'}]}},
+        \ ]})
+  AssertEqual [['same)']], vim_ai_autocomplete#ParseGeminiAlternatives(body)
+  AssertEqual [], vim_ai_autocomplete#ParseGeminiAlternatives('not json')
+  AssertEqual [], vim_ai_autocomplete#ParseDeepseekAlternatives('{}')
+  AssertEqual [], vim_ai_autocomplete#ParseClaudeAlternatives('{}')
+
+" Vader's After: is sticky (applies to the blocks that FOLLOW), so the group's
+" cleanup is declared once here, before it, and reset again before UN-071.
+After:
+  call vim_ai_autocomplete#ClearSuggestion()
+  bwipeout!
+
+Execute (UN-070a ShowAlternatives shows the first entry and tracks count/index):
+  new
+  call setline(1, 'def sum(')
+  call cursor(1, 9)
+  call vim_ai_autocomplete#ShowAlternatives([{'lines': ['a, b):'], 'redundant_after': 1}, {'lines': ['*args):'], 'redundant_after': 0}])
+  Assert vim_ai_autocomplete#IsVisible()
+  AssertEqual ['a, b):'], vim_ai_autocomplete#CurrentSuggestion()
+  AssertEqual 2, vim_ai_autocomplete#AlternativesCount()
+  AssertEqual 1, vim_ai_autocomplete#AlternativesIndex()
+
+Execute (UN-070b CycleAlternatives moves and wraps at both ends):
+  new
+  call setline(1, 'def sum(')
+  call cursor(1, 9)
+  call vim_ai_autocomplete#ShowAlternatives([{'lines': ['a'], 'redundant_after': 0}, {'lines': ['b'], 'redundant_after': 0}, {'lines': ['c'], 'redundant_after': 0}])
+  AssertEqual 2, vim_ai_autocomplete#CycleAlternatives(1)
+  AssertEqual ['b'], vim_ai_autocomplete#CurrentSuggestion()
+  AssertEqual 1, vim_ai_autocomplete#CycleAlternatives(-1)
+  AssertEqual 3, vim_ai_autocomplete#CycleAlternatives(-1)
+  AssertEqual 1, vim_ai_autocomplete#CycleAlternatives(1)
+
+Execute (UN-070c AppendAlternative adds a lazy entry and jumps to it; Clear resets everything):
+  new
+  call setline(1, 'def sum(')
+  call cursor(1, 9)
+  call vim_ai_autocomplete#ShowAlternatives([{'lines': ['a'], 'redundant_after': 0}])
+  call vim_ai_autocomplete#AppendAlternative({'lines': ['b'], 'redundant_after': 0})
+  AssertEqual 2, vim_ai_autocomplete#AlternativesCount()
+  AssertEqual 2, vim_ai_autocomplete#AlternativesIndex()
+  AssertEqual ['b'], vim_ai_autocomplete#CurrentSuggestion()
+  call vim_ai_autocomplete#ClearSuggestion()
+  AssertEqual 0, vim_ai_autocomplete#AlternativesCount()
+  Assert !vim_ai_autocomplete#IsVisible()
+
+Execute (UN-070d a plain ShowSuggestion leaves no stale alternatives; Cycle on it is a no-op):
+  new
+  call setline(1, 'def sum(')
+  call cursor(1, 9)
+  call vim_ai_autocomplete#ShowAlternatives([{'lines': ['a'], 'redundant_after': 0}, {'lines': ['b'], 'redundant_after': 0}])
+  call vim_ai_autocomplete#ShowSuggestion(['fresh'])
+  AssertEqual 0, vim_ai_autocomplete#AlternativesCount()
+  AssertEqual 0, vim_ai_autocomplete#CycleAlternatives(1)
+  AssertEqual ['fresh'], vim_ai_autocomplete#CurrentSuggestion()
+
+After:
+  " the UN-070 buffers are gone; nothing to clean up from here on
+
+" UN-071: the cycle decision, kept pure so the lazy branch is testable without
+" mocking job_start: (delta, index, count, wanted, max_per_request) ->
+" 'cycle' | 'fetch' | 'noop'.
+Execute (UN-071 CycleDecision: fetch only past the end, below N, on a 1-per-request family):
+  AssertEqual 'fetch', vim_ai_autocomplete#CycleDecision(1, 1, 1, 3, 1), 'anthropic, at end, below N'
+  AssertEqual 'cycle', vim_ai_autocomplete#CycleDecision(1, 1, 1, 3, 8), 'gemini: everything came in one request, just wrap'
+  AssertEqual 'cycle', vim_ai_autocomplete#CycleDecision(1, 3, 3, 3, 1), 'N reached: wrap, no more requests'
+  AssertEqual 'cycle', vim_ai_autocomplete#CycleDecision(-1, 1, 1, 3, 1), 'previous never fetches'
+  AssertEqual 'cycle', vim_ai_autocomplete#CycleDecision(1, 1, 2, 3, 1), 'not at the end yet'
+  AssertEqual 'noop', vim_ai_autocomplete#CycleDecision(1, 0, 0, 3, 1), 'nothing visible'
+  AssertEqual 'noop', vim_ai_autocomplete#CycleDecision(1, 1, 2, 0, 8), 'feature off'

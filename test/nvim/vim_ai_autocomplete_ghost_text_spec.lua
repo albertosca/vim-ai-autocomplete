@@ -75,3 +75,82 @@ describe("vim-ai-autocomplete.ghost_text", function()
     assert.are.same({ 'def foo(x):', '    return x' }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
   end)
 end)
+
+describe("vim-ai-autocomplete.ghost_text alternatives cycling (issue #3)", function()
+  local buf
+
+  before_each(function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def sum(' })
+    vim.fn.cursor(1, 9)
+  end)
+
+  after_each(function()
+    ghost_text.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  local entries = {
+    { lines = { 'a, b):' }, redundant_after = 1 },
+    { lines = { '*args):' }, redundant_after = 0 },
+    { lines = { 'x):', '    return x' }, redundant_after = 1 },
+  }
+
+  it("show_alternatives displays the first entry and tracks count/index", function()
+    ghost_text.show_alternatives(entries)
+    assert.is_true(ghost_text.is_visible())
+    assert.are.same({ 'a, b):' }, ghost_text.current_suggestion())
+    assert.are.equal(3, ghost_text.alternatives_count())
+    assert.are.equal(1, ghost_text.alternatives_index())
+  end)
+
+  it("cycle(1) moves to the next entry, with that entry's own redundant_after", function()
+    ghost_text.show_alternatives(entries)
+    ghost_text.cycle(1)
+    assert.are.same({ '*args):' }, ghost_text.current_suggestion())
+    assert.are.equal(2, ghost_text.alternatives_index())
+  end)
+
+  it("cycling wraps around at both ends", function()
+    ghost_text.show_alternatives(entries)
+    ghost_text.cycle(-1)
+    assert.are.equal(3, ghost_text.alternatives_index())
+    ghost_text.cycle(1)
+    assert.are.equal(1, ghost_text.alternatives_index())
+  end)
+
+  it("accept() after cycling inserts the CURRENTLY shown alternative", function()
+    ghost_text.show_alternatives(entries)
+    ghost_text.cycle(1)
+    -- accept path: the state the accept reads must be the cycled entry
+    assert.are.same({ '*args):' }, ghost_text.current_suggestion())
+  end)
+
+  it("append_alternative adds a lazily fetched entry and jumps to it", function()
+    ghost_text.show_alternatives({ entries[1] })
+    ghost_text.append_alternative(entries[2])
+    assert.are.equal(2, ghost_text.alternatives_count())
+    assert.are.equal(2, ghost_text.alternatives_index())
+    assert.are.same({ '*args):' }, ghost_text.current_suggestion())
+  end)
+
+  it("cycle with no alternatives state is a no-op returning nil", function()
+    ghost_text.show_suggestion({ 'plain' })
+    assert.is_nil(ghost_text.cycle(1))
+  end)
+
+  it("clear_suggestion resets the alternatives state too", function()
+    ghost_text.show_alternatives(entries)
+    ghost_text.clear_suggestion()
+    assert.are.equal(0, ghost_text.alternatives_count())
+    assert.is_false(ghost_text.is_visible())
+  end)
+
+  it("show_suggestion (the single-suggestion path) leaves no stale alternatives behind", function()
+    ghost_text.show_alternatives(entries)
+    ghost_text.show_suggestion({ 'fresh' })
+    assert.are.equal(0, ghost_text.alternatives_count())
+    assert.are.same({ 'fresh' }, ghost_text.current_suggestion())
+  end)
+end)

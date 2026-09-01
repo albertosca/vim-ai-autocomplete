@@ -15,7 +15,7 @@ Autocomplete de IA via ghost-text para Vim 9+ e Neovim, com round-robin plugáve
 ## Por baixo do capô
 
 - **Duas implementações nativas em paridade de comportamento** — Vimscript puro (textprops do Vim 9) e Lua puro (extmarks do Neovim), sem camada de compatibilidade, cada uma idiomática ao seu editor.
-- **297 testes, sem precisar de rede** — 143 vader (Vim) + 154 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
+- **343 testes, sem precisar de rede** — 158 vader (Vim) + 185 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
 - **Prompt FIM com detecção de redundância** — o modelo sabe o que existe depois do cursor, e qualquer coisa que ele repita (um fecha-parênteses que o auto-pairs já inseriu, um sufixo duplicado) é detectada estruturalmente, exibida riscada, e descartada ao aceitar — nunca silenciosamente.
 - **Falha suave** — resposta malformada, candidate bloqueado por filtro e erro de billing viram um aviso único, nunca stack trace no meio da digitação.
 
@@ -88,6 +88,7 @@ require('vim-ai-autocomplete').setup({
     { name = 'claude-sonnet', family = 'anthropic', model_id = 'claude-sonnet-5', api_key_env = 'ANTHROPIC_API_KEY' },
   },
   auto_trigger = true, -- opcional, default true
+  alternatives = 3, -- opcional, default desligado; ver "Alternativas" abaixo
 })
 ```
 
@@ -97,8 +98,33 @@ require('vim-ai-autocomplete').setup({
 | `family` | `'gemini'`, `'anthropic'` ou `'deepseek'` — determina o formato da requisição/resposta |
 | `model_id` | O ID real do modelo enviado pra API do provedor |
 | `api_key_env` | Nome da variável de ambiente que guarda a API key daquele provedor |
+| `candidates_per_request` | Opcional, default 1 — quantas alternativas esse modelo devolve por requisição; leia "Alternativas" abaixo antes de subir de 1 |
 
 Se você não configurar nada, o default é um modelo Gemini e um Claude. Um modelo só fica "ativo" (elegível pro ciclo do `,pr`) se o `api_key_env` dele estiver de fato setado e não-vazio no ambiente.
+
+### Alternativas (ciclar entre várias sugestões)
+
+Desligado por padrão — cada alternativa é uma chamada paga à API. Ligue informando quantas sugestões quer por trigger:
+
+```vim
+let g:vim_ai_autocomplete_alternatives = 3   " ou setup({ alternatives = 3 }) no Neovim
+```
+
+Com uma sugestão visível, `<M-.>` (Alt+.) mostra a próxima alternativa e `<M-,>` a anterior, dando a volta nas duas pontas; `Tab` aceita a que estiver na tela. As teclas só são reivindicadas com a feature ligada. Cada alternativa passa pelo mesmo pós-processamento de uma sugestão única (redundância de parênteses, sobreposição de indentação, remoção de fences), então se comportam igual ao aceitar.
+
+**O custo — medido, não presumido:**
+
+Por padrão cada alternativa é **uma requisição extra**, buscada sob demanda: o primeiro trigger traz uma sugestão, e cada `<M-.>` além do fim pede mais uma — até N, e só pelo que você de fato olha. Alternativas idênticas colapsam numa só; se uma busca só repetir a resposta anterior do modelo, nada é adicionado e uma mensagem curta avisa.
+
+O Gemini (`candidateCount`) e APIs compatíveis com OpenAI como a do DeepSeek (`n`) têm um campo pra devolver vários candidatos na **mesma** requisição, o que deixaria as alternativas quase de graça — por isso o plugin suporta isso como **opt-in por modelo**:
+
+```vim
+let g:vim_ai_autocomplete_models = [
+      \ {'name': 'gemini-flash', 'family': 'gemini', 'model_id': '...', 'api_key_env': 'GEMINI_API_KEY', 'candidates_per_request': 3},
+      \ ]
+```
+
+Só ligue depois de conferir que o seu modelo aceita: em chamadas reais em 01/09/2026, o `gemini-3.1-flash-lite` respondeu *"Multiple candidates is not enabled for this model"* e o `deepseek-v4-pro` *"Invalid n value (currently only n = 1 is supported)"* — e um modelo que rejeita o campo devolve **sugestão nenhuma**, que é o motivo de o padrão ser sob demanda. A Messages API da Anthropic não tem esse campo, então lá é sempre sob demanda.
 
 ## Uso
 
@@ -106,6 +132,7 @@ Se você não configurar nada, o default é um modelo Gemini e um Claude. Um mod
 |---|---|
 | `Tab` | Aceita a sugestão visível (cai pro seu mapping original de `Tab` caso contrário) |
 | `<C-]>` | Descarta a sugestão visível sem sair do insert mode |
+| `<M-.>` / `<M-,>` | Próxima / anterior alternativa — só com `g:vim_ai_autocomplete_alternatives >= 2` (ver Configuração) |
 | `,pt` | Liga/desliga o auto-trigger |
 | `,pr` | Cicla pro próximo modelo ativo (só registrado com 2+ modelos ativos) |
 | `,pm` | Escolhe um modelo num menu flutuante (`j`/`k` move, `<CR>` seleciona, `<Esc>`/`q` fecha) — só registrado com 2+ modelos ativos |

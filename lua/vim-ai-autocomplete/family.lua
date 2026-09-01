@@ -40,8 +40,15 @@ function M.extract_api_error_message(raw_output)
   return nil
 end
 
-function M.build_gemini_request(context)
-  return vim.json.encode({ contents = { { parts = { { text = build_full_prompt(context) } } } } })
+-- n (optional): how many candidates to ask for IN THIS request -- the cheap
+-- half of the hybrid strategy for issue #3 (one request, several completions).
+-- n absent or 1 keeps the request byte-identical to what it always was.
+function M.build_gemini_request(context, n)
+  local body = { contents = { { parts = { { text = build_full_prompt(context) } } } } }
+  if type(n) == 'number' and n > 1 then
+    body.generationConfig = { candidateCount = n }
+  end
+  return vim.json.encode(body)
 end
 
 -- Anthropic prefix caching only pays when the prefix repeats byte-for-byte
@@ -81,15 +88,18 @@ function M.build_claude_request(context, model)
   return vim.json.encode({ model = model, max_tokens = 256, thinking = { type = 'disabled' }, messages = { { role = 'user', content = build_full_prompt(context) } } })
 end
 
-function M.build_gemini_command(context, model_id, api_key)
-  local body = M.build_gemini_request(context)
+function M.build_gemini_command(context, model_id, api_key, n)
+  local body = M.build_gemini_request(context, n)
   local endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' .. model_id .. ':generateContent?key=' .. api_key
   return { 'curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body }
 end
 
 -- `ant` (Anthropic's official CLI) was dropped on the Vim side on 2026-07-20
 -- -- no billing advantage for this plugin's use case. Static key only.
-function M.build_claude_command(context, model, api_key)
+-- accepts (and ignores) the n argument the uniform handler signature carries:
+-- the Messages API has no multi-candidate field, which is exactly why the
+-- anthropic side of the hybrid fetches alternatives lazily (issue #3).
+function M.build_claude_command(context, model, api_key, _n)
   local body = M.build_claude_request(context, model)
   return {
     'curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
@@ -103,20 +113,25 @@ end
 -- https://api.deepseek.com/chat/completions, `Authorization: Bearer <key>`,
 -- body {model, messages: [{role, content}]}. Confirmed against the official
 -- docs (api-docs.deepseek.com) on 2026-08-10, not assumed from memory.
-function M.build_deepseek_request(context, model)
+function M.build_deepseek_request(context, model, n)
   -- thinking must be disabled explicitly: deepseek-v4-flash reasons by
   -- default, and the reasoning made a completion take 55.6s against 1.6s
   -- with it off (both measured with real calls, 2026-08-25) -- useless for
   -- an autocomplete either way.
-  return vim.json.encode({
+  local body = {
     model = model,
     thinking = { type = 'disabled' },
     messages = { { role = 'user', content = build_full_prompt(context) } },
-  })
+  }
+  -- the OpenAI-compatible multi-candidate field (hybrid strategy, issue #3)
+  if type(n) == 'number' and n > 1 then
+    body.n = n
+  end
+  return vim.json.encode(body)
 end
 
-function M.build_deepseek_command(context, model_id, api_key)
-  local body = M.build_deepseek_request(context, model_id)
+function M.build_deepseek_command(context, model_id, api_key, n)
+  local body = M.build_deepseek_request(context, model_id, n)
   return {
     'curl', '-s', '-X', 'POST', 'https://api.deepseek.com/chat/completions',
     '-H', 'Authorization: Bearer ' .. api_key,
@@ -215,16 +230,82 @@ function M.parse_claude_response(body)
   return {}
 end
 
+-- Shared tail of every parse_*_alternatives: sanitize/split each candidate
+-- with the same rules as parse_response, drop the ones that vanish, and
+-- collapse duplicates (deepseek with n>1 does return identical choices).
+local function collect_alternatives(texts)
+  local out, seen = {}, {}
+  for _, text in ipairs(texts) do
+    local lines = split_suggestion(text)
+    if #lines > 0 then
+      local key = table.concat(lines, '\n')
+      if not seen[key] then
+        seen[key] = true
+        table.insert(out, lines)
+      end
+    end
+  end
+  return out
+end
+
+-- parse_*_alternatives(body) -> list of suggestion-line-lists, one per usable
+-- candidate (issue #3). Same defensive guards as the parse_response family:
+-- a blocked/malformed candidate is skipped, never a crash.
+function M.parse_gemini_alternatives(body)
+  local ok, data = pcall(vim.json.decode, body)
+  if not ok or type(data) ~= 'table' or type(data.candidates) ~= 'table' then
+    return {}
+  end
+  local texts = {}
+  for _, candidate in ipairs(data.candidates) do
+    if type(candidate) == 'table' and type(candidate.content) == 'table'
+        and type(candidate.content.parts) == 'table' and #candidate.content.parts > 0
+        and type(candidate.content.parts[1].text) == 'string' then
+      table.insert(texts, candidate.content.parts[1].text)
+    end
+  end
+  return collect_alternatives(texts)
+end
+
+function M.parse_deepseek_alternatives(body)
+  local ok, data = pcall(vim.json.decode, body)
+  if not ok or type(data) ~= 'table' or type(data.choices) ~= 'table' then
+    return {}
+  end
+  local texts = {}
+  for _, choice in ipairs(data.choices) do
+    if type(choice) == 'table' and type(choice.message) == 'table'
+        and type(choice.message.content) == 'string' then
+      table.insert(texts, choice.message.content)
+    end
+  end
+  return collect_alternatives(texts)
+end
+
+function M.parse_claude_alternatives(body)
+  local lines = M.parse_claude_response(body)
+  if #lines == 0 then
+    return {}
+  end
+  return { lines }
+end
+
 -- Every API family implements two operations with a uniform signature:
 -- build_command(context, model_id, api_key) -> argv list for vim.system
 -- parse_response(body) -> list of suggestion lines
 -- Adding a new family (e.g. OpenAI) means implementing those two functions
 -- and registering them here -- the same escape hatch as on the Vim side.
 function M.family_handler(family_name)
+  -- max_candidates_per_request makes the hybrid cost model visible: gemini
+  -- and deepseek deliver up to 8 alternatives in the SAME request; anthropic
+  -- delivers 1, so every extra alternative there is one extra (lazy) request.
   local handlers = {
-    gemini = { build_command = M.build_gemini_command, parse_response = M.parse_gemini_response },
-    anthropic = { build_command = M.build_claude_command, parse_response = M.parse_claude_response },
-    deepseek = { build_command = M.build_deepseek_command, parse_response = M.parse_deepseek_response },
+    gemini = { build_command = M.build_gemini_command, parse_response = M.parse_gemini_response,
+      parse_alternatives = M.parse_gemini_alternatives, max_candidates_per_request = 8 },
+    anthropic = { build_command = M.build_claude_command, parse_response = M.parse_claude_response,
+      parse_alternatives = M.parse_claude_alternatives, max_candidates_per_request = 1 },
+    deepseek = { build_command = M.build_deepseek_command, parse_response = M.parse_deepseek_response,
+      parse_alternatives = M.parse_deepseek_alternatives, max_candidates_per_request = 8 },
   }
   local handler = handlers[family_name]
   if not handler then

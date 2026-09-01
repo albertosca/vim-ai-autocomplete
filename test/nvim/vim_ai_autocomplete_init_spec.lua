@@ -74,3 +74,27 @@ describe("vim-ai-autocomplete.setup com opts", function()
     assert.has_no.errors(function() vai.setup() end)
   end)
 end)
+
+describe("vim-ai-autocomplete.init alternatives keymaps (issue #3)", function()
+  after_each(function()
+    vim.g.vim_ai_autocomplete_alternatives = nil
+    pcall(vim.keymap.del, 'i', '<M-.>')
+    pcall(vim.keymap.del, 'i', '<M-,>')
+    package.loaded['vim-ai-autocomplete'] = nil
+  end)
+
+  it("feature off (default): <M-.> and <M-,> are NOT claimed", function()
+    vim.fn.setenv('GEMINI_API_KEY', 'k')
+    require('vim-ai-autocomplete').setup()
+    assert.are.equal('', vim.fn.maparg('<M-.>', 'i'))
+    assert.are.equal('', vim.fn.maparg('<M-,>', 'i'))
+  end)
+
+  it("setup({ alternatives = 3 }) sets the global and maps both cycle keys", function()
+    vim.fn.setenv('GEMINI_API_KEY', 'k')
+    require('vim-ai-autocomplete').setup({ alternatives = 3 })
+    assert.are.equal(3, vim.g.vim_ai_autocomplete_alternatives)
+    assert.are_not.equal('', vim.fn.maparg('<M-.>', 'i'))
+    assert.are_not.equal('', vim.fn.maparg('<M-,>', 'i'))
+  end)
+end)

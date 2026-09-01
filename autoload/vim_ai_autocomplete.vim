@@ -281,8 +281,16 @@ function! s:BuildFullPrompt(context) abort
   return s:instruction_head . a:context.before . "\n\nAFTER THE CURSOR:\n" . a:context.after . s:AnchorLine(a:context.before)
 endfunction
 
-function! vim_ai_autocomplete#BuildGeminiRequest(context) abort
-  return json_encode({'contents': [{'parts': [{'text': s:BuildFullPrompt(a:context)}]}]})
+" n (optional): how many candidates to ask for IN THIS request -- the cheap
+" half of the hybrid strategy for issue #3 (one request, several completions).
+" n absent or 1 keeps the request byte-identical to what it always was.
+function! vim_ai_autocomplete#BuildGeminiRequest(context, ...) abort
+  let body = {'contents': [{'parts': [{'text': s:BuildFullPrompt(a:context)}]}]}
+  let n = a:0 > 0 ? a:1 : 0
+  if type(n) == v:t_number && n > 1
+    let body.generationConfig = {'candidateCount': n}
+  endif
+  return json_encode(body)
 endfunction
 
 " Anthropic prefix caching only pays when the prefix repeats byte-for-byte
@@ -325,8 +333,14 @@ endfunction
 " and the reasoning made a completion take 55.6s against 1.6s with it off
 " (both measured with real calls, 2026-08-25) -- useless for an autocomplete
 " either way.
-function! vim_ai_autocomplete#BuildDeepseekRequest(context, model) abort
-  return json_encode({'model': a:model, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': s:BuildFullPrompt(a:context)}]})
+function! vim_ai_autocomplete#BuildDeepseekRequest(context, model, ...) abort
+  let body = {'model': a:model, 'thinking': {'type': 'disabled'}, 'messages': [{'role': 'user', 'content': s:BuildFullPrompt(a:context)}]}
+  " the OpenAI-compatible multi-candidate field (hybrid strategy, issue #3)
+  let n = a:0 > 0 ? a:1 : 0
+  if type(n) == v:t_number && n > 1
+    let body.n = n
+  endif
+  return json_encode(body)
 endfunction
 
 " Finds the longest overlap between the END of the suggestion and the START
@@ -496,7 +510,10 @@ endfunction
 " system). Dropped from here on 2026-07-20 ("ant is useless here") -- it
 " only changed how you authenticate, with no billing advantage for this
 " plugin's use case. It always uses the static key now.
-function! vim_ai_autocomplete#BuildClaudeCommand(context, model, api_key) abort
+" accepts (and ignores) the n argument the uniform handler signature carries:
+" the Messages API has no multi-candidate field, which is exactly why the
+" anthropic side of the hybrid fetches alternatives lazily (issue #3).
+function! vim_ai_autocomplete#BuildClaudeCommand(context, model, api_key, ...) abort
   let body = vim_ai_autocomplete#BuildClaudeRequest(a:context, a:model)
   return ['curl', '-s', '-X', 'POST', 'https://api.anthropic.com/v1/messages',
         \ '-H', 'x-api-key: ' . a:api_key,
@@ -509,14 +526,14 @@ endfunction
 " with Claude). Extracted so the families share a uniform interface
 " (build_command(context, model_id, api_key) -> cmd), used by FamilyHandler()
 " below.
-function! vim_ai_autocomplete#BuildGeminiCommand(context, model_id, api_key) abort
-  let body = vim_ai_autocomplete#BuildGeminiRequest(a:context)
+function! vim_ai_autocomplete#BuildGeminiCommand(context, model_id, api_key, ...) abort
+  let body = vim_ai_autocomplete#BuildGeminiRequest(a:context, a:0 > 0 ? a:1 : 0)
   let endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' . a:model_id . ':generateContent?key=' . a:api_key
   return ['curl', '-s', '-X', 'POST', endpoint, '-H', 'Content-Type: application/json', '-d', body]
 endfunction
 
-function! vim_ai_autocomplete#BuildDeepseekCommand(context, model_id, api_key) abort
-  let body = vim_ai_autocomplete#BuildDeepseekRequest(a:context, a:model_id)
+function! vim_ai_autocomplete#BuildDeepseekCommand(context, model_id, api_key, ...) abort
+  let body = vim_ai_autocomplete#BuildDeepseekRequest(a:context, a:model_id, a:0 > 0 ? a:1 : 0)
   return ['curl', '-s', '-X', 'POST', 'https://api.deepseek.com/chat/completions',
         \ '-H', 'Authorization: Bearer ' . a:api_key,
         \ '-H', 'Content-Type: application/json', '-d', body]
@@ -543,10 +560,16 @@ endfunction
 " it has not happened yet), so every function really does exist.
 " loaded), so every function really does exist by then.
 function! vim_ai_autocomplete#FamilyHandler(family) abort
+  " max_candidates_per_request makes the hybrid cost model visible: gemini
+  " and deepseek deliver up to 8 alternatives in the SAME request; anthropic
+  " delivers 1, so every extra alternative there is one extra (lazy) request.
   let handlers = {
-        \ 'gemini': {'build_command': function('vim_ai_autocomplete#BuildGeminiCommand'), 'parse_response': function('vim_ai_autocomplete#ParseGeminiResponse')},
-        \ 'anthropic': {'build_command': function('vim_ai_autocomplete#BuildClaudeCommand'), 'parse_response': function('vim_ai_autocomplete#ParseClaudeResponse')},
-        \ 'deepseek': {'build_command': function('vim_ai_autocomplete#BuildDeepseekCommand'), 'parse_response': function('vim_ai_autocomplete#ParseDeepseekResponse')},
+        \ 'gemini': {'build_command': function('vim_ai_autocomplete#BuildGeminiCommand'), 'parse_response': function('vim_ai_autocomplete#ParseGeminiResponse'),
+        \   'parse_alternatives': function('vim_ai_autocomplete#ParseGeminiAlternatives'), 'max_candidates_per_request': 8},
+        \ 'anthropic': {'build_command': function('vim_ai_autocomplete#BuildClaudeCommand'), 'parse_response': function('vim_ai_autocomplete#ParseClaudeResponse'),
+        \   'parse_alternatives': function('vim_ai_autocomplete#ParseClaudeAlternatives'), 'max_candidates_per_request': 1},
+        \ 'deepseek': {'build_command': function('vim_ai_autocomplete#BuildDeepseekCommand'), 'parse_response': function('vim_ai_autocomplete#ParseDeepseekResponse'),
+        \   'parse_alternatives': function('vim_ai_autocomplete#ParseDeepseekAlternatives'), 'max_candidates_per_request': 8},
         \ }
   if !has_key(handlers, a:family)
     throw 'vim-ai-autocomplete: unknown family "' . a:family . '"'
@@ -584,7 +607,12 @@ endfunction
 " line. Fences in the MIDDLE are left alone: they can be legitimate content
 " (e.g. completing a markdown document).
 function! s:StripWrappingFences(text) abort
-  let text = substitute(a:text, '^```[^\n]*\n', '', '')
+  " .\{-}\n, not [^\n]*: inside a collection, \n is NOT "any char but newline"
+  " on every build -- Apple's vim 9.1.1752 matched [^\n]* straight across the
+  " line breaks (measured 2026-09-01: "```python\nx = 1\n```" stripped down to
+  " "```"), while brew's 9.2 did not. `.` never matches a newline, so this is
+  " the portable spelling.
+  let text = substitute(a:text, '^```.\{-}\n', '', '')
   let text = substitute(text, '\n```\s*$', '', '')
   return text
 endfunction
@@ -672,6 +700,73 @@ function! vim_ai_autocomplete#ParseDeepseekResponse(body) abort
   return s:SplitSuggestion(message.content)
 endfunction
 
+" Shared tail of every Parse*Alternatives: sanitize/split each candidate with
+" the same rules as the single-suggestion parsers, drop the ones that vanish,
+" and collapse duplicates (deepseek with n>1 does return identical choices).
+function! s:CollectAlternatives(texts) abort
+  let out = []
+  let seen = {}
+  for text in a:texts
+    let lines = s:SplitSuggestion(text)
+    if !empty(lines)
+      let key = join(lines, "\n")
+      if !has_key(seen, key)
+        let seen[key] = 1
+        call add(out, lines)
+      endif
+    endif
+  endfor
+  return out
+endfunction
+
+" Parse*Alternatives(body) -> list of suggestion-line-lists, one per usable
+" candidate (issue #3). Same defensive guards as the single parsers: a
+" blocked/malformed candidate is skipped, never a throw.
+function! vim_ai_autocomplete#ParseGeminiAlternatives(body) abort
+  try
+    let data = json_decode(a:body)
+  catch
+    return []
+  endtry
+  if type(data) != v:t_dict || type(get(data, 'candidates', v:null)) != v:t_list
+    return []
+  endif
+  let texts = []
+  for candidate in data.candidates
+    if type(candidate) == v:t_dict && type(get(candidate, 'content', v:null)) == v:t_dict
+      let parts = get(candidate.content, 'parts', [])
+      if type(parts) == v:t_list && !empty(parts) && type(get(parts[0], 'text', v:null)) == v:t_string
+        call add(texts, parts[0].text)
+      endif
+    endif
+  endfor
+  return s:CollectAlternatives(texts)
+endfunction
+
+function! vim_ai_autocomplete#ParseDeepseekAlternatives(body) abort
+  try
+    let data = json_decode(a:body)
+  catch
+    return []
+  endtry
+  if type(data) != v:t_dict || type(get(data, 'choices', v:null)) != v:t_list
+    return []
+  endif
+  let texts = []
+  for choice in data.choices
+    let message = type(choice) == v:t_dict ? get(choice, 'message', v:null) : v:null
+    if type(message) == v:t_dict && type(get(message, 'content', v:null)) == v:t_string
+      call add(texts, message.content)
+    endif
+  endfor
+  return s:CollectAlternatives(texts)
+endfunction
+
+function! vim_ai_autocomplete#ParseClaudeAlternatives(body) abort
+  let lines = vim_ai_autocomplete#ParseClaudeResponse(a:body)
+  return empty(lines) ? [] : [lines]
+endfunction
+
 " Symmetric counterpart of ComputeTextOverlapLength: that one catches the
 " model repeating what comes AFTER the cursor, this one what comes BEFORE.
 " Field report 2026-08-27 (reproduced 3/3 with real deepseek calls): the user
@@ -731,6 +826,10 @@ let s:current_suggestion = []
 let s:suggestion_lnum = 0
 let s:suggestion_col = 0
 let s:suggestion_redundant_after = 0
+" issue #3: the alternatives being cycled through -- a list of
+" {'lines', 'redundant_after'} entries -- and which one is on screen.
+let s:alternatives = []
+let s:alt_index = 0
 
 function! s:EnsurePropType() abort
   if empty(prop_type_get(s:prop_type))
@@ -761,9 +860,9 @@ endfunction
 " redundant_after (optional, defaults to 0): how many characters from the
 " START of the real text AFTER the cursor must be DISCARDED (not preserved)
 " on accept -- see CountRedundantAfterChars(). Used when the suggestion already
-" closes, with its own text, a bracket/brace that was open
-" aberto antes do cursor, deixando o fechamento real (ex: do auto-pairs)
-" orfao/duplicado.
+" closes, with its own text, a bracket/brace that was open before the cursor,
+" leaving the real closer (e.g. the one auto-pairs inserted) orphaned or
+" duplicated.
 function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   call vim_ai_autocomplete#ClearSuggestion()
   if empty(a:lines)
@@ -804,6 +903,61 @@ function! vim_ai_autocomplete#ClearSuggestion() abort
   let s:suggestion_lnum = 0
   let s:suggestion_col = 0
   let s:suggestion_redundant_after = 0
+  let s:alternatives = []
+  let s:alt_index = 0
+endfunction
+
+" issue #3: show a SET of alternatives, starting at the first. Each entry is
+" {'lines', 'redundant_after'}; cycling re-renders another entry at the same
+" cursor position. ShowSuggestion stays the single-suggestion primitive (it
+" clears any alternatives state, so a fresh trigger never leaks stale ones).
+function! vim_ai_autocomplete#ShowAlternatives(entries) abort
+  if empty(a:entries)
+    return
+  endif
+  call vim_ai_autocomplete#ShowSuggestion(a:entries[0].lines, a:entries[0].redundant_after)
+  let s:alternatives = deepcopy(a:entries)
+  let s:alt_index = 1
+endfunction
+
+" Moves delta (+1/-1) through the known alternatives, wrapping at both ends.
+" Returns the new 1-based index, or 0 when there is no alternatives state (a
+" plain single suggestion, or nothing visible) -- the caller decides whether
+" that means "fetch one lazily" or "nothing to do".
+function! vim_ai_autocomplete#CycleAlternatives(delta) abort
+  if empty(s:alternatives) || s:alt_index == 0
+    return 0
+  endif
+  let n = len(s:alternatives)
+  let index = ((s:alt_index - 1 + a:delta) % n + n) % n + 1
+  let alternatives = s:alternatives
+  let entry = alternatives[index - 1]
+  call vim_ai_autocomplete#ShowSuggestion(entry.lines, entry.redundant_after)
+  let s:alternatives = alternatives
+  let s:alt_index = index
+  return index
+endfunction
+
+" Appends a lazily fetched entry (the anthropic side of the hybrid) and jumps
+" to it -- the user pressed "next", so the new entry is what they asked for.
+function! vim_ai_autocomplete#AppendAlternative(entry) abort
+  let alternatives = s:alternatives
+  call add(alternatives, deepcopy(a:entry))
+  call vim_ai_autocomplete#ShowSuggestion(a:entry.lines, a:entry.redundant_after)
+  let s:alternatives = alternatives
+  let s:alt_index = len(alternatives)
+endfunction
+
+function! vim_ai_autocomplete#Alternatives() abort
+  return deepcopy(s:alternatives)
+endfunction
+
+function! vim_ai_autocomplete#AlternativesCount() abort
+  return len(s:alternatives)
+endfunction
+
+function! vim_ai_autocomplete#AlternativesIndex() abort
+  return s:alt_index
 endfunction
 
 function! vim_ai_autocomplete#IsVisible() abort
@@ -867,11 +1021,11 @@ function! vim_ai_autocomplete#Accept() abort
   if empty(lines)
     return ''
   endif
-  " Writes straight into the buffer through setline()/append() instead of
-  " <CR> simulado -- digitar <CR> dispara o autoindent/indentexpr real do
-  " Vim on every line, stacking on top of the indentation the API text
-  " trouxe, dobrando/desalinhando a indentacao real (achado via debug real
-  " with Gemini: a line expected to have 8 spaces became 12, another became 24).
+  " Writes straight into the buffer through setline()/append() instead of a
+  " simulated <CR> -- typing <CR> fires Vim's real autoindent/indentexpr on
+  " every line, stacking on top of the indentation the API text already
+  " carries, doubling/misaligning the real indentation (found through real
+  " debugging with Gemini: a line expected to have 8 spaces became 12, another became 24).
   "
   " The buffer mutation has to be DEFERRED through timer_start(0, ...): an
   " <expr> mapping (like the <Tab> that calls this function) may NOT change
@@ -1063,7 +1217,20 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   " raw_after is for s:OnExit, never for the prompt -- pull it out before the
   " context reaches the handler.
   let l:after = remove(context, 'raw_after')
-  let cmd = handler.build_command(context, model.model_id, api_key)
+  " issue #3, the hybrid strategy: batch N candidates into ONE request only
+  " where the MODEL opts in (candidates_per_request in its config entry);
+  " everything else fetches one per request, lazily, through
+  " CycleSuggestion. Lazy is the default because the batch fields are
+  " rejected by the models we measured: gemini-3.1-flash-lite answers
+  " "Multiple candidates is not enabled for this model" and deepseek-v4-pro
+  " "Invalid n value (currently only n = 1 is supported)" (real calls,
+  " 2026-09-01) -- shipping the batch blindly would have killed the first
+  " suggestion whenever the feature was on. 0 keeps the request unchanged.
+  let wanted = s:AlternativesN()
+  let per_request = wanted > 0
+        \ ? max([1, min([wanted, get(model, 'candidates_per_request', 1), handler.max_candidates_per_request])])
+        \ : 0
+  let cmd = handler.build_command(context, model.model_id, api_key, per_request)
 
   let s:gen += 1
   let l:gen = s:gen
@@ -1073,16 +1240,116 @@ function! vim_ai_autocomplete#RequestCompletion() abort
   let l:col = col('.')
   let l:provider = model.name
   let l:ParseResponse = handler.parse_response
+  let l:ParseAlternatives = handler.parse_alternatives
+  let l:wanted = wanted
+  let s:lazy_in_flight = 0
+  let s:last_trigger = {'handler': handler, 'model_id': model.model_id, 'api_key': api_key, 'context': context,
+        \ 'after': l:after, 'bufnr': l:bufnr, 'lnum': l:lnum, 'col': l:col, 'provider': l:provider, 'gen': l:gen,
+        \ 'per_request': max([1, per_request])}
 
   let opts = {
         \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
-        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:ParseResponse, l:bufnr, l:lnum, l:col, l:after)},
+        \ 'exit_cb': {job, status -> s:OnExit(l:gen, l:chunks, status, l:provider, l:ParseResponse, l:ParseAlternatives, l:wanted, l:bufnr, l:lnum, l:col, l:after)},
         \ 'out_mode': 'raw',
         \ }
   call job_start(cmd, opts)
 endfunction
 
-" Antes, qualquer falha (exit != 0, ou resposta de erro da API) resultava em
+" issue #3: how many alternatives the user asked to cycle through.
+" 0 = feature off (the default -- every alternative is a paid API call).
+function! s:AlternativesN() abort
+  let n = get(g:, 'vim_ai_autocomplete_alternatives', 0)
+  return type(n) == v:t_number && n >= 2 ? n : 0
+endfunction
+
+" everything the lazy fetch (the anthropic side of the hybrid) needs to
+" rebuild the SAME request later, captured at trigger time.
+let s:last_trigger = {}
+let s:lazy_in_flight = 0
+
+" The cycle decision, pure so the lazy branch is testable without job_start:
+" fetch only past the end, below N, when this model delivers one candidate
+" per request; otherwise cycle through what is already there.
+function! vim_ai_autocomplete#CycleDecision(delta, index, count, wanted, max_per_request) abort
+  if a:wanted < 2 || a:count == 0 || a:index == 0
+    return 'noop'
+  endif
+  if a:delta > 0 && a:index == a:count && a:count < a:wanted && a:max_per_request == 1
+    return 'fetch'
+  endif
+  return 'cycle'
+endfunction
+
+" issue #3: alternatives are off by default (each one is a paid call), and
+" the cycle keys are only claimed when the feature is on -- <M-.>/<M-,> stay
+" untouched otherwise. <Cmd> keeps insert mode and moves nothing.
+function! vim_ai_autocomplete#SetupAlternativesKeys() abort
+  if s:AlternativesN() < 2
+    return
+  endif
+  inoremap <silent> <M-.> <Cmd>call vim_ai_autocomplete#CycleSuggestion(1)<CR>
+  inoremap <silent> <M-,> <Cmd>call vim_ai_autocomplete#CycleSuggestion(-1)<CR>
+endfunction
+
+" <M-.> / <M-,> while a suggestion is visible (issue #3).
+function! vim_ai_autocomplete#CycleSuggestion(delta) abort
+  if !vim_ai_autocomplete#IsVisible() || empty(s:last_trigger)
+    return
+  endif
+  let decision = vim_ai_autocomplete#CycleDecision(a:delta, s:alt_index, len(s:alternatives),
+        \ s:AlternativesN(), s:last_trigger.per_request)
+  if decision ==# 'fetch'
+    call s:FetchLazyAlternative()
+  elseif decision ==# 'cycle'
+    call vim_ai_autocomplete#CycleAlternatives(a:delta)
+  endif
+endfunction
+
+" The lazy half of the hybrid (issue #3): one more request, same context,
+" appended as a new alternative when it arrives -- unless the cursor moved,
+" a newer trigger superseded it, or the model just repeated itself.
+function! s:FetchLazyAlternative() abort
+  if s:lazy_in_flight
+    return
+  endif
+  let s:lazy_in_flight = 1
+  let t = s:last_trigger
+  let cmd = t.handler.build_command(t.context, t.model_id, t.api_key)
+  let l:chunks = []
+  let opts = {
+        \ 'out_cb': {ch, msg -> add(l:chunks, msg)},
+        \ 'exit_cb': {job, status -> s:OnLazyExit(t, l:chunks, status)},
+        \ 'out_mode': 'raw',
+        \ }
+  call job_start(cmd, opts)
+endfunction
+
+function! s:OnLazyExit(t, chunks, status) abort
+  let s:lazy_in_flight = 0
+  if a:t.gen != s:gen || !vim_ai_autocomplete#IsVisible()
+    return
+  endif
+  if bufnr('%') != a:t.bufnr || line('.') != a:t.lnum || col('.') != a:t.col
+    return
+  endif
+  let body = join(a:chunks, '')
+  let lines = a:t.handler.parse_response(body)
+  if empty(lines)
+    call s:WarnCompletionFailure(a:t.provider, a:status, body)
+    return
+  endif
+  let [display, redundant_after] = s:ProcessCandidate(lines, a:t.lnum, a:t.col, a:t.after)
+  let key = join(display, "\n")
+  for existing in s:alternatives
+    if join(existing.lines, "\n") ==# key
+      echo 'vim-ai-autocomplete: no new alternative (the model repeated itself)'
+      return
+    endif
+  endfor
+  call vim_ai_autocomplete#AppendAlternative({'lines': display, 'redundant_after': redundant_after})
+endfunction
+
+" Previously any failure (exit != 0, or an error response from the API) meant
 " no suggestion appeared and NO warning was shown -- real finding, while
 " testing with an API credit balance of zero: it looked as if the completion
 " simply did nothing, with no hint why. Returns '' when there is nothing
@@ -1125,7 +1392,47 @@ function! s:WarnCompletionFailure(provider, status, raw_output) abort
   echohl None
 endfunction
 
-function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, col, after) abort
+" The per-candidate post-processing pipeline, shared by the single-suggestion
+" path and every alternative (issue #3 requires it to run per candidate).
+" Returns [display_lines, redundant_after].
+function! s:ProcessCandidate(lines, lnum, col, after) abort
+  let lines = a:lines
+  let current_line = getline(a:lnum)
+  let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
+  " CountRedundantAfterChars MUST run against the ORIGINAL suggestion,
+  " before any adjustment -- real finding ("def fibonacci(", where the last
+  " parenthesis never turned red): the real suggestion closes an INNER call
+  " (fibonacci(n - 2)) whose final ")" coincides textually with the "after"
+  " of the cursor (a single ")"). Trimming the suggestion FIRST corrupted
+  " that legitimate closer and zeroed the depth computation. Fixed by
+  " running the structural computation FIRST, with the text intact.
+  "
+  " Both sources of redundancy -- structural (brackets/quotes) and textual
+  " overlap (ComputeTextOverlapLength) -- ADD UP into a single
+  " redundant_after, and the suggestion is NEVER trimmed here: it always
+  " shows the complete API text, with the real "after" marked in red and
+  " discarded on accept.
+  let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
+  let remaining_after = strpart(a:after, redundant_after)
+  let redundant_after += vim_ai_autocomplete#ComputeTextOverlapLength(lines, remaining_after)
+  " a:after may span SEVERAL real buffer lines (up to 20 lines below the
+  " cursor go to the prompt) -- but the highlight and Accept() only operate
+  " on the cursor line. Cap redundant_after at what is really left ON THIS
+  " LINE (a whole suggestion duplicating several existing lines is a known,
+  " uncovered scope).
+  let current_line_remainder = strpart(current_line, a:col - 1)
+  let redundant_after = min([redundant_after, len(current_line_remainder)])
+  " before AdjustSuggestionLines: this one works on the raw model output,
+  " which is where the duplicated indentation lives.
+  let lines = vim_ai_autocomplete#StripLeadingIndentOverlap(lines, before_cursor)
+  let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
+  " last, with the lines already in the final shape that reaches the screen:
+  " drop from the suggestion the closing characters the buffer already has,
+  " so ")" is not rendered twice, pushing the real one away from the cursor.
+  return vim_ai_autocomplete#SplitDisplayTail(lines, a:after, redundant_after)
+endfunction
+
+function! s:OnExit(gen, chunks, status, provider, parse_response, parse_alternatives, wanted, bufnr, lnum, col, after) abort
   if a:gen != s:gen
     return
   endif
@@ -1137,49 +1444,28 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, bufnr, lnum, c
     return
   endif
   let body = join(a:chunks, '')
+  if a:wanted > 0
+    " the whole post-processing pipeline runs PER candidate (issue #3): each
+    " alternative closes (or not) its own brackets, duplicates (or not) its
+    " own indentation.
+    let entries = []
+    for candidate in a:parse_alternatives(body)
+      let [display, redundant_after] = s:ProcessCandidate(candidate, a:lnum, a:col, a:after)
+      call add(entries, {'lines': display, 'redundant_after': redundant_after})
+    endfor
+    if !empty(entries)
+      let s:last_completion_error = ''
+      call vim_ai_autocomplete#ShowAlternatives(entries)
+    else
+      call s:WarnCompletionFailure(a:provider, a:status, body)
+    endif
+    return
+  endif
   let lines = a:parse_response(body)
   if !empty(lines)
     let s:last_completion_error = ''
-    let current_line = getline(a:lnum)
-    let before_cursor = a:col > 1 ? current_line[: a:col - 2] : ''
-    " CountRedundantAfterChars MUST run against the ORIGINAL suggestion,
-    " before any adjustment -- real finding ("def fibonacci(", where the last
-    " parenthesis never turned red): the real suggestion closes an INNER call
-    " (fibonacci(n - 2)) whose final ")" coincides textually with the "after"
-    " of the cursor (a single ")"). Trimming the suggestion FIRST corrupted
-    " that legitimate closer and zeroed the depth computation. Fixed by
-    " running the structural computation FIRST, with the text intact.
-    "
-    " Both sources of redundancy -- structural (brackets/quotes) and textual
-    " overlap (ComputeTextOverlapLength) -- ADD UP into a single
-    " redundant_after, and the suggestion is NEVER trimmed here: it always
-    " shows the complete API text, with the real "after" marked in red and
-    " discarded on accept. Previously the textual overlap trimmed the
-    " suggestion silently (marking nothing red) -- real finding: "the red
-    " never shows up, even with the grey already written" (the grey had been
-    " adjusted by that mechanism, but the real character was never marked,
-    " because the two were handled differently).
-    let redundant_after = vim_ai_autocomplete#CountRedundantAfterChars(before_cursor, join(lines, "\n"), a:after)
-    let remaining_after = strpart(a:after, redundant_after)
-    let redundant_after += vim_ai_autocomplete#ComputeTextOverlapLength(lines, remaining_after)
-    " a:after may span SEVERAL real buffer lines (RequestCompletion
-    " sends up to 20 lines below the cursor to the prompt) -- but the
-    " highlight (prop_add with 'length') and Accept() (strpart on the current
-    " line) only operate on the cursor line. Caps redundant_after at what is
-    " really left ON THIS LINE, so it never tries to mark or delete text from
-    " following real lines (a rare case: a whole suggestion duplicating
-    " several existing lines) -- known scope, not covered.
-    let current_line_remainder = strpart(current_line, a:col - 1)
-    let redundant_after = min([redundant_after, len(current_line_remainder)])
-    " before AdjustSuggestionLines: this one works on the raw model output,
-    " which is where the duplicated indentation lives.
-    let lines = vim_ai_autocomplete#StripLeadingIndentOverlap(lines, before_cursor)
-    let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
-    " last, with the lines already in the final shape that reaches the screen:
-    " drop from the suggestion the closing characters the buffer already has,
-    " so ")" is not rendered twice, pushing the real one away from the cursor.
-    let [lines, redundant_after] = vim_ai_autocomplete#SplitDisplayTail(lines, a:after, redundant_after)
-    call vim_ai_autocomplete#ShowSuggestion(lines, redundant_after)
+    let [display, redundant_after] = s:ProcessCandidate(lines, a:lnum, a:col, a:after)
+    call vim_ai_autocomplete#ShowSuggestion(display, redundant_after)
   else
     call s:WarnCompletionFailure(a:provider, a:status, body)
   endif
