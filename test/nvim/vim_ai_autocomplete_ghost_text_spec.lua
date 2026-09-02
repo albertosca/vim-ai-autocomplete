@@ -154,3 +154,66 @@ describe("vim-ai-autocomplete.ghost_text alternatives cycling (issue #3)", funct
     assert.are.same({ 'fresh' }, ghost_text.current_suggestion())
   end)
 end)
+
+describe("vim-ai-autocomplete.ghost_text pending marker (issue #4)", function()
+  -- A transient end-of-line marker while a request is in flight: at the eol
+  -- (never inline, so it shifts no buffer text), shown only after a short
+  -- delay so fast requests never flicker, cleared on every exit path.
+  local buf
+  local ns = vim.api.nvim_create_namespace('vim_ai_autocomplete_pending')
+
+  local function pending_marks()
+    return vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
+  end
+
+  before_each(function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def sum(' })
+    vim.fn.cursor(1, 9)
+  end)
+
+  after_each(function()
+    ghost_text.clear_pending()
+    ghost_text.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("show_pending places an eol marker that shifts no text", function()
+    ghost_text.show_pending()
+    local marks = pending_marks()
+    assert.are.equal(1, #marks)
+    assert.are.equal('eol', marks[1][4].virt_text_pos)
+    assert.are.equal('def sum(', vim.fn.getline(1))
+    assert.is_true(ghost_text.is_pending())
+  end)
+
+  it("clear_pending removes it and is idempotent", function()
+    ghost_text.show_pending()
+    ghost_text.clear_pending()
+    ghost_text.clear_pending()
+    assert.are.same({}, pending_marks())
+    assert.is_false(ghost_text.is_pending())
+  end)
+
+  it("schedule_pending shows the marker only after the delay", function()
+    ghost_text.schedule_pending(30)
+    assert.are.same({}, pending_marks(), 'nothing yet')
+    vim.wait(200, function() return ghost_text.is_pending() end, 10)
+    assert.are.equal(1, #pending_marks())
+  end)
+
+  it("clear_pending before the delay cancels the scheduled marker (fast request: no flicker)", function()
+    ghost_text.schedule_pending(30)
+    ghost_text.clear_pending()
+    vim.wait(120, function() return ghost_text.is_pending() end, 10)
+    assert.are.same({}, pending_marks())
+  end)
+
+  it("show_suggestion clears the pending marker (the answer arrived)", function()
+    ghost_text.show_pending()
+    ghost_text.show_suggestion({ 'a, b)' })
+    assert.are.same({}, pending_marks())
+    assert.is_true(ghost_text.is_visible())
+  end)
+end)

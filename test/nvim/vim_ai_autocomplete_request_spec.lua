@@ -217,3 +217,81 @@ describe("vim-ai-autocomplete.request alternatives cycling (issue #3, vim.system
     assert.are.same({ 'x' }, ghost_text.current_suggestion())
   end)
 end)
+
+
+describe("vim-ai-autocomplete.request in-flight marker (issue #4, vim.system mocked)", function()
+  local buf, original_system
+  local pending_ns = vim.api.nvim_create_namespace('vim_ai_autocomplete_pending')
+
+  local function marks()
+    return vim.api.nvim_buf_get_extmarks(buf, pending_ns, 0, -1, {})
+  end
+
+  before_each(function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    ghost_text.clear_pending()
+    ghost_text.clear_suggestion()
+    vim.g.vim_ai_autocomplete_models = nil
+    vim.g.vim_ai_autocomplete_provider = nil
+    vim.g.vim_ai_autocomplete_pending_delay_ms = 20
+    vim.fn.setenv('GEMINI_API_KEY', 'test-key')
+    vim.fn.setenv('ANTHROPIC_API_KEY', vim.NIL)
+    package.loaded['vim-ai-autocomplete.request'] = nil
+    original_system = vim.system
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def sum(' })
+    vim.api.nvim_win_set_cursor(0, { 1, 8 })
+  end)
+
+  after_each(function()
+    vim.system = original_system
+    vim.g.vim_ai_autocomplete_pending_delay_ms = nil
+    ghost_text.clear_pending()
+    ghost_text.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  local body = vim.json.encode({ candidates = { { content = { parts = { { text = 'a, b)' } } } } } })
+
+  it("a slow request shows the marker after the delay and clears it when the answer lands", function()
+    local finish
+    vim.system = function(_, _, on_exit) finish = function() on_exit({ code = 0, stdout = body }) end end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.wait(300, function() return ghost_text.is_pending() end, 10)
+    assert.are.equal(1, #marks(), 'marker while in flight')
+    finish()
+    vim.wait(300, function() return ghost_text.is_visible() end, 10)
+    assert.are.same({}, marks(), 'marker gone once the suggestion shows')
+  end)
+
+  it("a fast request never shows the marker", function()
+    vim.g.vim_ai_autocomplete_pending_delay_ms = 150
+    vim.system = function(_, _, on_exit) on_exit({ code = 0, stdout = body }) end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.wait(300, function() return ghost_text.is_visible() end, 10)
+    vim.wait(250, function() return ghost_text.is_pending() end, 10)
+    assert.are.same({}, marks())
+  end)
+
+  it("a stale answer (cursor moved) clears the marker without showing anything", function()
+    local finish
+    vim.system = function(_, _, on_exit) finish = function() on_exit({ code = 0, stdout = body }) end end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.wait(300, function() return ghost_text.is_pending() end, 10)
+    vim.api.nvim_win_set_cursor(0, { 1, 4 })
+    finish()
+    vim.wait(100, function() return not ghost_text.is_pending() end, 10)
+    assert.are.same({}, marks())
+    assert.is_false(ghost_text.is_visible())
+  end)
+
+  it("a failed request clears the marker too", function()
+    local finish
+    vim.system = function(_, _, on_exit) finish = function() on_exit({ code = 7, stdout = '' }) end end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.wait(300, function() return ghost_text.is_pending() end, 10)
+    finish()
+    vim.wait(100, function() return not ghost_text.is_pending() end, 10)
+    assert.are.same({}, marks())
+  end)
+end)

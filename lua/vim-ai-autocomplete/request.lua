@@ -28,6 +28,16 @@ local function alternatives_n()
   return math.floor(n)
 end
 
+-- issue #4: how long a request may stay silent before the in-flight marker
+-- shows. Fast answers (most gemini/deepseek ones) never flash anything.
+local function pending_delay_ms()
+  local n = vim.g.vim_ai_autocomplete_pending_delay_ms
+  if type(n) == 'number' and n >= 0 then
+    return n
+  end
+  return 400
+end
+
 -- everything the lazy fetch (the anthropic side of the hybrid) needs to
 -- rebuild the SAME request later, captured at trigger time.
 local last_trigger = nil
@@ -66,6 +76,9 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
   if request_gen ~= gen then
     return
   end
+  -- issue #4: this request is over, whatever comes next -- the marker goes
+  -- on every path below (answer, stale, failure).
+  ghost_text.clear_pending()
   -- drop it if the cursor already moved since the request was made.
   if vim.api.nvim_get_current_buf() ~= bufnr or vim.fn.line('.') ~= lnum or vim.fn.col('.') ~= col then
     return
@@ -205,6 +218,7 @@ function M.request_completion()
       on_exit(request_gen, chunks, result.code, provider, parse_response, parse_alternatives, wanted ~= nil, bufnr, lnum, col, after)
     end)
   end)
+  ghost_text.schedule_pending(pending_delay_ms())
 end
 
 -- The lazy half of the hybrid (issue #3): one more request, same context,
@@ -224,7 +238,11 @@ local function fetch_lazy_alternative()
     end
     vim.schedule(function()
       lazy_in_flight = false
-      if t.gen ~= gen or not ghost_text.is_visible() then
+      if t.gen ~= gen then
+        return
+      end
+      ghost_text.clear_pending()
+      if not ghost_text.is_visible() then
         return
       end
       if vim.api.nvim_get_current_buf() ~= t.bufnr or vim.fn.line('.') ~= t.lnum or vim.fn.col('.') ~= t.col then
@@ -247,6 +265,7 @@ local function fetch_lazy_alternative()
       ghost_text.append_alternative({ lines = display, redundant_after = redundant_after })
     end)
   end)
+  ghost_text.schedule_pending(pending_delay_ms())
 end
 
 -- <M-.> / <M-,> while a suggestion is visible (issue #3). Moves through the

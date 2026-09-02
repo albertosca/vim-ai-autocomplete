@@ -2,6 +2,10 @@ local M = {}
 
 local ns = vim.api.nvim_create_namespace('vim_ai_autocomplete')
 local HL_GROUP = 'VimAiAutocompleteRedundant'
+-- issue #4: the in-flight marker has a namespace of its own, so clearing a
+-- suggestion never touches it and vice versa.
+local pending_ns = vim.api.nvim_create_namespace('vim_ai_autocomplete_pending')
+local PENDING_MARKER = '…'
 
 local state = {
   suggestion = {},
@@ -12,6 +16,11 @@ local state = {
   -- {lines, redundant_after} entries -- and which one is on screen.
   alternatives = {},
   alt_index = 0,
+  -- issue #4: whether the in-flight marker is on screen, where it was put,
+  -- and a token that lets clear_pending() cancel a scheduled show.
+  pending = false,
+  pending_bufnr = 0,
+  pending_token = 0,
 }
 
 -- A highlight of its OWN for the real redundant character -- red plus
@@ -27,6 +36,7 @@ end
 -- redundant_after (optional, defaults to 0): how many characters from the
 -- START of the real text AFTER the cursor must be DISCARDED on accept.
 function M.show_suggestion(lines, redundant_after)
+  M.clear_pending()
   M.clear_suggestion()
   if #lines == 0 then
     return
@@ -138,6 +148,52 @@ end
 
 function M.alternatives_index()
   return state.alt_index
+end
+
+-- issue #4: a transient marker while a request is in flight. Field report:
+-- "sometimes I wait a reasonable time and I cannot tell whether the
+-- suggestion is coming or not". The API round-trip (1.4-4.5 s) dominates and
+-- cannot be shrunk from here, so this is about legibility, not speed.
+--
+-- End-of-line virtual text, never inline: inline text shifts the real line
+-- on every keystroke, which is exactly the flicker the ghost-text work
+-- removed. Shown only after a delay (schedule_pending), so a fast answer
+-- never flashes anything; cleared on EVERY exit of the request (answer,
+-- stale, failure) by the request layer, and by show_suggestion itself.
+function M.show_pending()
+  M.clear_pending()
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_extmark(bufnr, pending_ns, vim.fn.line('.') - 1, 0, {
+    virt_text = { { PENDING_MARKER, 'Comment' } },
+    virt_text_pos = 'eol',
+  })
+  state.pending = true
+  state.pending_bufnr = bufnr
+end
+
+-- Shows the marker only if nothing cancels it within delay_ms -- the token
+-- makes a clear_pending() in between (the answer came fast) win the race.
+function M.schedule_pending(delay_ms)
+  state.pending_token = state.pending_token + 1
+  local token = state.pending_token
+  vim.defer_fn(function()
+    if token == state.pending_token and not state.pending then
+      M.show_pending()
+    end
+  end, delay_ms)
+end
+
+function M.clear_pending()
+  state.pending_token = state.pending_token + 1
+  if state.pending and vim.api.nvim_buf_is_valid(state.pending_bufnr) then
+    vim.api.nvim_buf_clear_namespace(state.pending_bufnr, pending_ns, 0, -1)
+  end
+  state.pending = false
+  state.pending_bufnr = 0
+end
+
+function M.is_pending()
+  return state.pending
 end
 
 function M.insert_accepted_lines(lines, lnum, col, redundant_after)

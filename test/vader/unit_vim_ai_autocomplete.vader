@@ -968,3 +968,69 @@ Execute (UN-071 CycleDecision: fetch only past the end, below N, on a 1-per-requ
   AssertEqual 'cycle', vim_ai_autocomplete#CycleDecision(1, 1, 2, 3, 1), 'not at the end yet'
   AssertEqual 'noop', vim_ai_autocomplete#CycleDecision(1, 0, 0, 3, 1), 'nothing visible'
   AssertEqual 'noop', vim_ai_autocomplete#CycleDecision(1, 1, 2, 0, 8), 'feature off'
+
+" UN-072: the in-flight marker (issue #4), Vim mirror. End-of-line text
+" property (text_align 'after' -- never inline, so no buffer text shifts),
+" shown only after a delay so fast answers never flash, cleared on every
+" exit of the request and by ShowSuggestion itself.
+After:
+  call vim_ai_autocomplete#ClearPending()
+  call vim_ai_autocomplete#ClearSuggestion()
+  bwipeout!
+
+Execute (UN-072a ShowPending adds an after-eol prop and shifts no text):
+  new
+  call setline(1, 'def sum(')
+  call cursor(1, 9)
+  call vim_ai_autocomplete#ShowPending()
+  Assert vim_ai_autocomplete#IsPending()
+  let props = filter(prop_list(1), 'v:val.type ==# "VimAiAutocompletePending"')
+  AssertEqual 1, len(props)
+  AssertEqual 'def sum(', getline(1)
+
+Execute (UN-072b ClearPending removes it and is idempotent):
+  new
+  call setline(1, 'def sum(')
+  call vim_ai_autocomplete#ShowPending()
+  call vim_ai_autocomplete#ClearPending()
+  call vim_ai_autocomplete#ClearPending()
+  Assert !vim_ai_autocomplete#IsPending()
+  AssertEqual 0, len(filter(prop_list(1), 'v:val.type ==# "VimAiAutocompletePending"'))
+
+Execute (UN-072c SchedulePending shows the marker only after the delay):
+  new
+  call setline(1, 'def sum(')
+  call vim_ai_autocomplete#SchedulePending(30)
+  Assert !vim_ai_autocomplete#IsPending(), 'nothing yet'
+  sleep 120m
+  Assert vim_ai_autocomplete#IsPending(), 'shown after the delay'
+
+Execute (UN-072d ClearPending before the delay cancels the scheduled marker):
+  new
+  call setline(1, 'def sum(')
+  call vim_ai_autocomplete#SchedulePending(30)
+  call vim_ai_autocomplete#ClearPending()
+  sleep 120m
+  Assert !vim_ai_autocomplete#IsPending(), 'a fast answer never flashes the marker'
+
+Execute (UN-072e ShowSuggestion clears the pending marker):
+  new
+  call setline(1, 'def sum(')
+  call cursor(1, 9)
+  call vim_ai_autocomplete#ShowPending()
+  call vim_ai_autocomplete#ShowSuggestion(['a, b)'])
+  Assert !vim_ai_autocomplete#IsPending()
+  Assert vim_ai_autocomplete#IsVisible()
+
+After:
+  " end of the UN-072 group
+
+
+" UN-073: the test Vim itself is isolated from the machine's native packages.
+" ~/.vim/pack/github/start/copilot.vim loads on any Vim start unless packpath
+" is empty, and spawns @github/copilot-language-server through npx -- one
+" keychain prompt per test run (2026-09-01). Guard the isolation itself.
+Execute (UN-073 the test vimrc keeps native packages (and copilot.vim) out):
+  AssertEqual $VIMRUNTIME, &packpath, 'packpath must be Vim''s own runtime only under test/minimal_vimrc.vim'
+  AssertEqual 1, get(g:, 'loaded_copilot', 0), 'g:loaded_copilot must be set as a belt to that brace'
+  Assert execute('scriptnames') !~? 'copilot', 'no copilot script may be sourced in the test Vim'

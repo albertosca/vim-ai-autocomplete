@@ -15,7 +15,7 @@ Autocomplete de IA via ghost-text para Vim 9+ e Neovim, com round-robin plugáve
 ## Por baixo do capô
 
 - **Duas implementações nativas em paridade de comportamento** — Vimscript puro (textprops do Vim 9) e Lua puro (extmarks do Neovim), sem camada de compatibilidade, cada uma idiomática ao seu editor.
-- **343 testes, sem precisar de rede** — 158 vader (Vim) + 185 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
+- **358 testes, sem precisar de rede** — 164 vader (Vim) + 194 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
 - **Prompt FIM com detecção de redundância** — o modelo sabe o que existe depois do cursor, e qualquer coisa que ele repita (um fecha-parênteses que o auto-pairs já inseriu, um sufixo duplicado) é detectada estruturalmente, exibida riscada, e descartada ao aceitar — nunca silenciosamente.
 - **Falha suave** — resposta malformada, candidate bloqueado por filtro e erro de billing viram um aviso único, nunca stack trace no meio da digitação.
 
@@ -133,6 +133,7 @@ Só ligue depois de conferir que o seu modelo aceita: em chamadas reais em 01/09
 | `Tab` | Aceita a sugestão visível (cai pro seu mapping original de `Tab` caso contrário) |
 | `<C-]>` | Descarta a sugestão visível sem sair do insert mode |
 | `<M-.>` / `<M-,>` | Próxima / anterior alternativa — só com `g:vim_ai_autocomplete_alternatives >= 2` (ver Configuração) |
+| `…` no fim da linha | Há uma requisição em voo (aparece só depois de 400 ms — `g:vim_ai_autocomplete_pending_delay_ms` — então respostas rápidas nunca piscam; some no instante em que chega a resposta, um resultado velho ou uma falha) |
 | `,pt` | Liga/desliga o auto-trigger |
 | `,pr` | Cicla pro próximo modelo ativo (só registrado com 2+ modelos ativos) |
 | `,pm` | Escolhe um modelo num menu flutuante (`j`/`k` move, `<CR>` seleciona, `<Esc>`/`q` fecha) — só registrado com 2+ modelos ativos |

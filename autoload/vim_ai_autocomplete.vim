@@ -1,3 +1,4 @@
+scriptencoding utf-8
 " Default that preserves exactly what the plugin does today (Gemini plus
 " Claude, same model_ids) when the user does not set g:vim_ai_autocomplete_models.
 function! vim_ai_autocomplete#DefaultModels() abort
@@ -830,6 +831,13 @@ let s:suggestion_redundant_after = 0
 " {'lines', 'redundant_after'} entries -- and which one is on screen.
 let s:alternatives = []
 let s:alt_index = 0
+" issue #4: the in-flight marker -- its own prop type (never touched by the
+" suggestion props), a timer for the delayed show, and where it was put.
+let s:pending_prop_type = 'VimAiAutocompletePending'
+let s:pending = 0
+let s:pending_lnum = 0
+let s:pending_bufnr = 0
+let s:pending_timer = -1
 
 function! s:EnsurePropType() abort
   if empty(prop_type_get(s:prop_type))
@@ -864,6 +872,7 @@ endfunction
 " leaving the real closer (e.g. the one auto-pairs inserted) orphaned or
 " duplicated.
 function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
+  call vim_ai_autocomplete#ClearPending()
   call vim_ai_autocomplete#ClearSuggestion()
   if empty(a:lines)
     return
@@ -958,6 +967,65 @@ endfunction
 
 function! vim_ai_autocomplete#AlternativesIndex() abort
   return s:alt_index
+endfunction
+
+" issue #4: a transient marker while a request is in flight. Field report:
+" "sometimes I wait a reasonable time and I cannot tell whether the
+" suggestion is coming or not". The API round-trip (1.4-4.5 s) dominates and
+" cannot be shrunk from here, so this is about legibility, not speed.
+"
+" text_align 'after' (end of line), never inline: an inline prop shifts the
+" real line on every keystroke -- the flicker the ghost-text work removed --
+" and the text is never empty (an empty prop renders as U+FFFD). Shown only
+" after a delay (SchedulePending), so a fast answer never flashes anything;
+" cleared on EVERY exit of the request by the request layer, and by
+" ShowSuggestion itself.
+function! s:EnsurePendingPropType() abort
+  if empty(prop_type_get(s:pending_prop_type))
+    call prop_type_add(s:pending_prop_type, {'highlight': 'Comment'})
+  endif
+endfunction
+
+function! vim_ai_autocomplete#ShowPending() abort
+  call vim_ai_autocomplete#ClearPending()
+  call s:EnsurePendingPropType()
+  call prop_add(line('.'), 0, {'type': s:pending_prop_type, 'text': '…', 'text_align': 'after'})
+  let s:pending = 1
+  let s:pending_lnum = line('.')
+  let s:pending_bufnr = bufnr('%')
+endfunction
+
+function! s:OnPendingTimer(timer_id) abort
+  let s:pending_timer = -1
+  if !s:pending
+    call vim_ai_autocomplete#ShowPending()
+  endif
+endfunction
+
+" Shows the marker only if nothing cancels it within delay_ms -- a
+" ClearPending() in between (the answer came fast) stops the timer.
+function! vim_ai_autocomplete#SchedulePending(delay_ms) abort
+  if s:pending_timer != -1
+    call timer_stop(s:pending_timer)
+  endif
+  let s:pending_timer = timer_start(a:delay_ms, function('s:OnPendingTimer'))
+endfunction
+
+function! vim_ai_autocomplete#ClearPending() abort
+  if s:pending_timer != -1
+    call timer_stop(s:pending_timer)
+    let s:pending_timer = -1
+  endif
+  if s:pending && bufexists(s:pending_bufnr) && !empty(prop_type_get(s:pending_prop_type))
+    call prop_remove({'type': s:pending_prop_type, 'bufnr': s:pending_bufnr, 'all': v:true})
+  endif
+  let s:pending = 0
+  let s:pending_lnum = 0
+  let s:pending_bufnr = 0
+endfunction
+
+function! vim_ai_autocomplete#IsPending() abort
+  return s:pending
 endfunction
 
 function! vim_ai_autocomplete#IsVisible() abort
@@ -1253,6 +1321,7 @@ function! vim_ai_autocomplete#RequestCompletion() abort
         \ 'out_mode': 'raw',
         \ }
   call job_start(cmd, opts)
+  call vim_ai_autocomplete#SchedulePending(s:PendingDelayMs())
 endfunction
 
 " issue #3: how many alternatives the user asked to cycle through.
@@ -1260,6 +1329,13 @@ endfunction
 function! s:AlternativesN() abort
   let n = get(g:, 'vim_ai_autocomplete_alternatives', 0)
   return type(n) == v:t_number && n >= 2 ? n : 0
+endfunction
+
+" issue #4: how long a request may stay silent before the in-flight marker
+" shows. Fast answers (most gemini/deepseek ones) never flash anything.
+function! s:PendingDelayMs() abort
+  let n = get(g:, 'vim_ai_autocomplete_pending_delay_ms', 400)
+  return type(n) == v:t_number && n >= 0 ? n : 400
 endfunction
 
 " everything the lazy fetch (the anthropic side of the hybrid) needs to
@@ -1322,11 +1398,16 @@ function! s:FetchLazyAlternative() abort
         \ 'out_mode': 'raw',
         \ }
   call job_start(cmd, opts)
+  call vim_ai_autocomplete#SchedulePending(s:PendingDelayMs())
 endfunction
 
 function! s:OnLazyExit(t, chunks, status) abort
   let s:lazy_in_flight = 0
-  if a:t.gen != s:gen || !vim_ai_autocomplete#IsVisible()
+  if a:t.gen != s:gen
+    return
+  endif
+  call vim_ai_autocomplete#ClearPending()
+  if !vim_ai_autocomplete#IsVisible()
     return
   endif
   if bufnr('%') != a:t.bufnr || line('.') != a:t.lnum || col('.') != a:t.col
@@ -1436,6 +1517,9 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, parse_alternat
   if a:gen != s:gen
     return
   endif
+  " issue #4: this request is over, whatever comes next -- the marker goes
+  " on every path below (answer, stale, failure).
+  call vim_ai_autocomplete#ClearPending()
   " drop it if the cursor already moved since the request was made (the
   " response arrived too late, the context changed) -- this applies to the
   " error path as well, otherwise an error from a stale request could surface

@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **343 tests, no network required** — 158 vader (Vim) + 185 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **358 tests, no network required** — 164 vader (Vim) + 194 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
@@ -133,6 +133,7 @@ Opt in only after checking your model accepts it: with real calls on 2026-09-01,
 | `Tab` | Accept the visible suggestion (falls through to your original `Tab` mapping otherwise) |
 | `<C-]>` | Dismiss the visible suggestion without leaving insert mode |
 | `<M-.>` / `<M-,>` | Next / previous alternative — only with `g:vim_ai_autocomplete_alternatives >= 2` (see Configuration) |
+| `…` at the end of the line | A request is in flight (appears only after 400 ms — `g:vim_ai_autocomplete_pending_delay_ms` — so fast answers never flash it; gone the moment the answer, a stale result or a failure lands) |
 | `,pt` | Toggle auto-trigger on/off |
 | `,pr` | Cycle to the next active model (only registered with 2+ active models) |
 | `,pm` | Pick a model from a floating menu (`j`/`k` to move, `<CR>` to select, `<Esc>`/`q` to close) — only registered with 2+ active models |
