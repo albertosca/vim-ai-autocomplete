@@ -460,3 +460,16 @@ Execute (IT-027 g:vim_ai_autocomplete_cycle_next/prev replace the default cycle 
   Assert maparg('<C-Right>', 'i') =~# 'CycleSuggestion(1)', 'custom next mapped'
   Assert maparg('<C-Left>', 'i') =~# 'CycleSuggestion(-1)', 'custom previous mapped'
   AssertEqual '', maparg('<M-.>', 'i'), 'the default is not claimed when overridden'
+
+Execute (IT-028 terminal Vim learns that ESC+char is the <M-char> cycle key):
+  if has('nvim') || has('gui_running')
+    Assert 1, 'not a terminal Vim -- nothing to declare'
+  else
+    let g:vim_ai_autocomplete_alternatives = 3
+    call vim_ai_autocomplete#SetupAlternativesKeys()
+    " :set <M-.>? echoes the termcode Vim now associates with the key
+    let shown = execute('set <M-.>?')
+    Assert shown =~# '\^\[\.', 'expected the ESC-dot termcode for <M-.>, got: ' . shown
+    let shown = execute('set <M-,>?')
+    Assert shown =~# '\^\[,', 'expected the ESC-comma termcode for <M-,>, got: ' . shown
+  endif

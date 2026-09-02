@@ -1393,8 +1393,27 @@ function! vim_ai_autocomplete#SetupAlternativesKeys() abort
   endif
   let next_key = get(g:, 'vim_ai_autocomplete_cycle_next', '<M-.>')
   let prev_key = get(g:, 'vim_ai_autocomplete_cycle_prev', '<M-,>')
+  call s:DeclareMetaTermcode(next_key)
+  call s:DeclareMetaTermcode(prev_key)
   execute 'inoremap <silent> ' . next_key . ' <Cmd>call vim_ai_autocomplete#CycleSuggestion(1)<CR>'
   execute 'inoremap <silent> ' . prev_key . ' <Cmd>call vim_ai_autocomplete#CycleSuggestion(-1)<CR>'
+endfunction
+
+" Terminal Vim receives Alt+x from the terminal as ESC followed by x and, unlike
+" Neovim, does not decode that into <M-x> by itself: the ESC left insert mode
+" and the "," became the leader key (measured inside tmux, 2026-09-02 --
+" which-key popped up instead of cycling). Declaring the termcode teaches Vim
+" that ESC x is one key. Only for the <M-c> shape, only outside the GUI, and
+" never on Neovim, which handles Alt natively.
+function! s:DeclareMetaTermcode(key) abort
+  if has('nvim') || has('gui_running')
+    return
+  endif
+  let char = matchstr(a:key, '\c^<M-\zs.\ze>$')
+  if empty(char)
+    return
+  endif
+  execute 'set ' . a:key . "=\<Esc>" . char
 endfunction
 
 " <M-.> / <M-,> while a suggestion is visible (issue #3).
