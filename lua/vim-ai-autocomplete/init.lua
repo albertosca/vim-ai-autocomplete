@@ -56,6 +56,12 @@ function M.setup(opts)
   if opts.alternatives ~= nil then
     vim.g.vim_ai_autocomplete_alternatives = opts.alternatives
   end
+  if opts.cycle_next ~= nil then
+    vim.g.vim_ai_autocomplete_cycle_next = opts.cycle_next
+  end
+  if opts.cycle_prev ~= nil then
+    vim.g.vim_ai_autocomplete_cycle_prev = opts.cycle_prev
+  end
 
   if vim.g.vim_ai_autocomplete_auto_trigger == nil then
     vim.g.vim_ai_autocomplete_auto_trigger = 1
@@ -67,11 +73,17 @@ function M.setup(opts)
   -- issue #3: alternatives are off by default (each one is a paid call), and
   -- the cycle keys are only claimed when the feature is on -- <M-.>/<M-,>
   -- stay untouched otherwise.
+  -- The keys are configurable because <M-.> only arrives if the terminal
+  -- sends Option/Alt as Meta -- on macOS that is iTerm's "Option key: Esc+";
+  -- with the default "Normal" mode Option+. types "≥" instead (measured
+  -- 2026-09-02). Anyone who prefers not to touch the terminal picks other keys.
   local alternatives = vim.g.vim_ai_autocomplete_alternatives
   if type(alternatives) == 'number' and alternatives >= 2 then
-    vim.keymap.set('i', '<M-.>', function() require('vim-ai-autocomplete.request').cycle_suggestion(1) end,
+    local next_key = vim.g.vim_ai_autocomplete_cycle_next or '<M-.>'
+    local prev_key = vim.g.vim_ai_autocomplete_cycle_prev or '<M-,>'
+    vim.keymap.set('i', next_key, function() require('vim-ai-autocomplete.request').cycle_suggestion(1) end,
       { silent = true, desc = 'vim-ai-autocomplete: next alternative' })
-    vim.keymap.set('i', '<M-,>', function() require('vim-ai-autocomplete.request').cycle_suggestion(-1) end,
+    vim.keymap.set('i', prev_key, function() require('vim-ai-autocomplete.request').cycle_suggestion(-1) end,
       { silent = true, desc = 'vim-ai-autocomplete: previous alternative' })
   end
 

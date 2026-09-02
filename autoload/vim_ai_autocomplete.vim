@@ -1383,12 +1383,18 @@ endfunction
 " issue #3: alternatives are off by default (each one is a paid call), and
 " the cycle keys are only claimed when the feature is on -- <M-.>/<M-,> stay
 " untouched otherwise. <Cmd> keeps insert mode and moves nothing.
+" The keys are configurable because <M-.> only arrives if the terminal sends
+" Option/Alt as Meta -- on macOS that is iTerm's "Option key: Esc+"; with the
+" default "Normal" mode Option+. types "≥" instead (measured 2026-09-02).
+" Anyone who prefers not to touch the terminal picks other keys.
 function! vim_ai_autocomplete#SetupAlternativesKeys() abort
   if s:AlternativesN() < 2
     return
   endif
-  inoremap <silent> <M-.> <Cmd>call vim_ai_autocomplete#CycleSuggestion(1)<CR>
-  inoremap <silent> <M-,> <Cmd>call vim_ai_autocomplete#CycleSuggestion(-1)<CR>
+  let next_key = get(g:, 'vim_ai_autocomplete_cycle_next', '<M-.>')
+  let prev_key = get(g:, 'vim_ai_autocomplete_cycle_prev', '<M-,>')
+  execute 'inoremap <silent> ' . next_key . ' <Cmd>call vim_ai_autocomplete#CycleSuggestion(1)<CR>'
+  execute 'inoremap <silent> ' . prev_key . ' <Cmd>call vim_ai_autocomplete#CycleSuggestion(-1)<CR>'
 endfunction
 
 " <M-.> / <M-,> while a suggestion is visible (issue #3).

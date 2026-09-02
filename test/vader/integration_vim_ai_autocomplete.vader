@@ -434,8 +434,12 @@ Execute (IT-025 cursor ON the definition line -- the reported end-of-file failur
 " next file starts).
 After:
   unlet! g:vim_ai_autocomplete_alternatives
+  unlet! g:vim_ai_autocomplete_cycle_next
+  unlet! g:vim_ai_autocomplete_cycle_prev
   silent! iunmap <M-.>
   silent! iunmap <M-,>
+  silent! iunmap <C-Right>
+  silent! iunmap <C-Left>
 
 Execute (IT-026 SetupAlternativesKeys claims <M-.>/<M-,> only when the feature is on):
   silent! iunmap <M-.>
@@ -447,3 +451,12 @@ Execute (IT-026 SetupAlternativesKeys claims <M-.>/<M-,> only when the feature i
   call vim_ai_autocomplete#SetupAlternativesKeys()
   Assert maparg('<M-.>', 'i') =~# 'CycleSuggestion(1)', 'next mapped'
   Assert maparg('<M-,>', 'i') =~# 'CycleSuggestion(-1)', 'previous mapped'
+
+Execute (IT-027 g:vim_ai_autocomplete_cycle_next/prev replace the default cycle keys):
+  let g:vim_ai_autocomplete_alternatives = 3
+  let g:vim_ai_autocomplete_cycle_next = '<C-Right>'
+  let g:vim_ai_autocomplete_cycle_prev = '<C-Left>'
+  call vim_ai_autocomplete#SetupAlternativesKeys()
+  Assert maparg('<C-Right>', 'i') =~# 'CycleSuggestion(1)', 'custom next mapped'
+  Assert maparg('<C-Left>', 'i') =~# 'CycleSuggestion(-1)', 'custom previous mapped'
+  AssertEqual '', maparg('<M-.>', 'i'), 'the default is not claimed when overridden'

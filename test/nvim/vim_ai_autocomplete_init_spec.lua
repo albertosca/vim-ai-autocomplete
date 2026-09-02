@@ -98,3 +98,30 @@ describe("vim-ai-autocomplete.init alternatives keymaps (issue #3)", function()
     assert.are_not.equal('', vim.fn.maparg('<M-,>', 'i'))
   end)
 end)
+
+describe("vim-ai-autocomplete.init configurable cycle keys (macOS Option)", function()
+  after_each(function()
+    vim.g.vim_ai_autocomplete_alternatives = nil
+    vim.g.vim_ai_autocomplete_cycle_next = nil
+    vim.g.vim_ai_autocomplete_cycle_prev = nil
+    for _, k in ipairs({ '<M-.>', '<M-,>', '<C-Right>', '<C-Left>' }) do pcall(vim.keymap.del, 'i', k) end
+    package.loaded['vim-ai-autocomplete'] = nil
+  end)
+
+  it("g:vim_ai_autocomplete_cycle_next/prev replace the default keys", function()
+    vim.fn.setenv('GEMINI_API_KEY', 'k')
+    vim.g.vim_ai_autocomplete_cycle_next = '<C-Right>'
+    vim.g.vim_ai_autocomplete_cycle_prev = '<C-Left>'
+    require('vim-ai-autocomplete').setup({ alternatives = 3 })
+    assert.are_not.equal('', vim.fn.maparg('<C-Right>', 'i'))
+    assert.are_not.equal('', vim.fn.maparg('<C-Left>', 'i'))
+    assert.are.equal('', vim.fn.maparg('<M-.>', 'i'), 'the default is not claimed when overridden')
+  end)
+
+  it("setup({ cycle_next = ..., cycle_prev = ... }) is sugar over the same globals", function()
+    vim.fn.setenv('GEMINI_API_KEY', 'k')
+    require('vim-ai-autocomplete').setup({ alternatives = 2, cycle_next = '<C-Right>', cycle_prev = '<C-Left>' })
+    assert.are.equal('<C-Right>', vim.g.vim_ai_autocomplete_cycle_next)
+    assert.are_not.equal('', vim.fn.maparg('<C-Right>', 'i'))
+  end)
+end)

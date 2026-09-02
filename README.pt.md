@@ -15,7 +15,7 @@ Autocomplete de IA via ghost-text para Vim 9+ e Neovim, com round-robin plugáve
 ## Por baixo do capô
 
 - **Duas implementações nativas em paridade de comportamento** — Vimscript puro (textprops do Vim 9) e Lua puro (extmarks do Neovim), sem camada de compatibilidade, cada uma idiomática ao seu editor.
-- **362 testes, sem precisar de rede** — 165 vader (Vim) + 197 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
+- **365 testes, sem precisar de rede** — 166 vader (Vim) + 199 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
 - **Prompt FIM com detecção de redundância** — o modelo sabe o que existe depois do cursor, e qualquer coisa que ele repita (um fecha-parênteses que o auto-pairs já inseriu, um sufixo duplicado) é detectada estruturalmente, exibida riscada, e descartada ao aceitar — nunca silenciosamente.
 - **Falha suave** — resposta malformada, candidate bloqueado por filtro e erro de billing viram um aviso único, nunca stack trace no meio da digitação.
 
@@ -110,7 +110,14 @@ Desligado por padrão — cada alternativa é uma chamada paga à API. Ligue inf
 let g:vim_ai_autocomplete_alternatives = 3   " ou setup({ alternatives = 3 }) no Neovim
 ```
 
-Com uma sugestão visível, `<M-.>` (Alt+.) mostra a próxima alternativa e `<M-,>` a anterior, dando a volta nas duas pontas; `Tab` aceita a que estiver na tela. As teclas só são reivindicadas com a feature ligada. Cada alternativa passa pelo mesmo pós-processamento de uma sugestão única (redundância de parênteses, sobreposição de indentação, remoção de fences), então se comportam igual ao aceitar.
+Com uma sugestão visível, `<M-.>` (Alt+.) mostra a próxima alternativa e `<M-,>` a anterior, dando a volta nas duas pontas; `Tab` aceita a que estiver na tela. As teclas só são reivindicadas com a feature ligada, e são configuráveis:
+
+```vim
+let g:vim_ai_autocomplete_cycle_next = '<C-Right>'   " ou setup({ cycle_next = ..., cycle_prev = ... })
+let g:vim_ai_autocomplete_cycle_prev = '<C-Left>'
+```
+
+> **macOS:** Alt é a tecla Option, e por padrão o terminal usa ela pra digitar símbolos (Option+. digita `≥`) em vez de mandar Alt. No iTerm2, ative *Preferences › Profiles › Keys › Left Option key → Esc+* (vale pra janelas novas), ou escolha teclas sem Alt como acima. Neovim dentro do terminal tem a mesma restrição — é o terminal, não o editor. Cada alternativa passa pelo mesmo pós-processamento de uma sugestão única (redundância de parênteses, sobreposição de indentação, remoção de fences), então se comportam igual ao aceitar.
 
 **O custo — medido, não presumido:**
 

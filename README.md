@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **362 tests, no network required** — 165 vader (Vim) + 197 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **365 tests, no network required** — 166 vader (Vim) + 199 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
@@ -110,7 +110,14 @@ Off by default — every alternative is a paid API call. Turn it on with the num
 let g:vim_ai_autocomplete_alternatives = 3   " or setup({ alternatives = 3 }) on Neovim
 ```
 
-While a suggestion is visible, `<M-.>` (Alt+.) shows the next alternative and `<M-,>` the previous one, wrapping around at both ends; `Tab` accepts whichever is on screen. The keys are only claimed when the feature is on. Each alternative goes through the same post-processing as a single suggestion (bracket redundancy, indent overlap, fence unwrapping), so they behave identically on accept.
+While a suggestion is visible, `<M-.>` (Alt+.) shows the next alternative and `<M-,>` the previous one, wrapping around at both ends; `Tab` accepts whichever is on screen. The keys are only claimed when the feature is on, and they are configurable:
+
+```vim
+let g:vim_ai_autocomplete_cycle_next = '<C-Right>'   " or setup({ cycle_next = ..., cycle_prev = ... })
+let g:vim_ai_autocomplete_cycle_prev = '<C-Left>'
+```
+
+> **macOS:** Alt is the Option key, and by default the terminal uses it to type symbols (Option+. types `≥`) instead of sending Alt. In iTerm2 set *Preferences › Profiles › Keys › Left Option key → Esc+* (new windows only), or pick keys without Alt as above. Neovim inside a terminal has the same constraint — it is the terminal, not the editor. Each alternative goes through the same post-processing as a single suggestion (bracket redundancy, indent overlap, fence unwrapping), so they behave identically on accept.
 
 **What it costs — measured, not assumed:**
 
