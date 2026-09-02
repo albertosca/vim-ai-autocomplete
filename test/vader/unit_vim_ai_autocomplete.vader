@@ -1083,3 +1083,21 @@ Execute (UN-075d the old whitespace rule still holds, and no-overlap/empty are u
   AssertEqual ['a, b):'], vim_ai_autocomplete#StripLeadingOverlap(['a, b):'], 'def add(')
   AssertEqual [], vim_ai_autocomplete#StripLeadingOverlap([], 'x(')
   AssertEqual ['(x'], vim_ai_autocomplete#StripLeadingOverlap(['(x'], '')
+
+" UN-076: an empty line in the middle of a suggestion must not become an empty
+" below-prop -- bare Vim renders that as "@" and garbles the following line
+" (measured 2026-09-02, a blank line between two methods of a class body).
+After:
+  call vim_ai_autocomplete#ClearSuggestion()
+  bwipeout!
+
+Execute (UN-076 empty middle lines are rendered as a single space, never an empty prop):
+  new
+  call setline(1, 'class Stack:')
+  call cursor(1, 13)
+  call vim_ai_autocomplete#ShowSuggestion(['', '    def a(self):', '', '    def b(self):'])
+  let below = filter(prop_list(1), 'has_key(v:val, "text_align") || get(v:val, "text", "x") !=# "x"')
+  let texts = map(copy(below), 'get(v:val, "text", "")')
+  Assert index(texts, '') < 0, 'no empty prop text may exist, got: ' . string(texts)
+  Assert index(texts, ' ') >= 0, 'the blank line is a single space, got: ' . string(texts)
+  AssertEqual ['', '    def a(self):', '', '    def b(self):'], vim_ai_autocomplete#CurrentSuggestion(), 'accept still inserts the real empty line'

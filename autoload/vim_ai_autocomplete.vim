@@ -913,8 +913,12 @@ function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   if !empty(a:lines[0])
     call prop_add(line('.'), col('.'), {'type': s:prop_type, 'text': a:lines[0]})
   endif
+  " an EMPTY below-line renders as "@" (measured in bare vim -u NONE,
+  " 2026-09-02: a blank line between two methods came out as "@" and
+  " garbled the line after it) -- same class as the empty inline prop above.
+  " A single space renders as the blank line the model meant.
   for l in a:lines[1:]
-    call prop_add(line('.'), 0, {'type': s:prop_type, 'text_align': 'below', 'text': l})
+    call prop_add(line('.'), 0, {'type': s:prop_type, 'text_align': 'below', 'text': empty(l) ? ' ' : l})
   endfor
   let redundant = a:0 > 0 ? a:1 : 0
   if redundant > 0
