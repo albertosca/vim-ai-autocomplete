@@ -355,3 +355,44 @@ describe("vim-ai-autocomplete.request completion menu awareness (issue #2)", fun
     assert.is_false(ghost_text.is_pending(), 'the in-flight marker is cleared too')
   end)
 end)
+
+
+describe("vim-ai-autocomplete.request debug log", function()
+  local buf, original_system, path
+
+  before_each(function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    ghost_text.clear_suggestion()
+    vim.g.vim_ai_autocomplete_models = nil
+    vim.g.vim_ai_autocomplete_provider = nil
+    vim.fn.setenv('GEMINI_API_KEY', 'test-key')
+    vim.fn.setenv('ANTHROPIC_API_KEY', vim.NIL)
+    package.loaded['vim-ai-autocomplete.request'] = nil
+    original_system = vim.system
+    path = vim.fn.tempname()
+    vim.g.vim_ai_autocomplete_debug_log = path
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def sum(' })
+    vim.api.nvim_win_set_cursor(0, { 1, 8 })
+  end)
+
+  after_each(function()
+    vim.system = original_system
+    vim.g.vim_ai_autocomplete_debug_log = nil
+    vim.fn.delete(path)
+    ghost_text.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("records every response with its generation, status and body head", function()
+    vim.system = function(_, _, on_exit)
+      on_exit({ code = 0, stdout = vim.json.encode({ candidates = { { content = { parts = { { text = 'a, b)' } } } } } }) })
+    end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.wait(200, function() return ghost_text.is_visible() end, 10)
+    local lines = vim.fn.readfile(path)
+    assert.are.equal(1, #lines)
+    assert.is_truthy(lines[1]:find('gen=1/1 status=0 len=', 1, true))
+    assert.is_truthy(lines[1]:find('current', 1, true))
+  end)
+end)

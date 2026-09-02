@@ -229,3 +229,39 @@ describe("vim-ai-autocomplete.redundancy.strip_leading_indent_overlap", function
     assert.are.same({ '\tbody' }, lines)
   end)
 end)
+
+describe("vim-ai-autocomplete.redundancy.strip_leading_overlap (echoed punctuation)", function()
+  -- Field report 2026-09-02 (gemini): with the cursor right after "(" the
+  -- model answered "(a, b):" -- an extra pair on screen -- and right after
+  -- "class Stack:" it answered ":\n    def ..." -- a second colon on the line
+  -- below. The model echoes the character just before the cursor. Stripping
+  -- the echo is safe only for punctuation/brackets: "fo" + "o = 1" is a
+  -- legitimate word continuation and must stay.
+  it("strips a bracket the model repeated from just before the cursor", function()
+    assert.are.same({ 'a, b):', '    return a + b' },
+      redundancy.strip_leading_overlap({ '(a, b):', '    return a + b' }, 'def add('))
+  end)
+
+  it("strips an echoed colon, leaving an empty first line for the newline logic", function()
+    assert.are.same({ '', '    def __init__(self):' },
+      redundancy.strip_leading_overlap({ ':', '    def __init__(self):' }, 'class Stack:'))
+  end)
+
+  it("strips a multi-character punctuation echo", function()
+    assert.are.same({ 'x)' }, redundancy.strip_leading_overlap({ '(x)' }, 'foo(('))
+  end)
+
+  it("never strips word characters (a partial identifier continues, it does not echo)", function()
+    assert.are.same({ 'o = 1' }, redundancy.strip_leading_overlap({ 'o = 1' }, 'fo'))
+  end)
+
+  it("still strips the indentation the user already typed (the old whitespace rule)", function()
+    assert.are.same({ 'if n <= 1:' }, redundancy.strip_leading_overlap({ '    if n <= 1:' }, '    '))
+  end)
+
+  it("no overlap, empty input or empty before -> untouched", function()
+    assert.are.same({ 'a, b):' }, redundancy.strip_leading_overlap({ 'a, b):' }, 'def add('))
+    assert.are.same({}, redundancy.strip_leading_overlap({}, 'x('))
+    assert.are.same({ '(x' }, redundancy.strip_leading_overlap({ '(x' }, ''))
+  end)
+end)

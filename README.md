@@ -15,7 +15,7 @@ Ghost-text AI autocomplete for Vim 9+ and Neovim, with pluggable multi-model rou
 ## Under the hood
 
 - **Two native implementations in behavioural parity** — pure Vimscript (Vim 9 textprops) and pure Lua (Neovim extmarks), no shared shim layer, each idiomatic to its editor.
-- **366 tests, no network required** — 167 vader (Vim) + 199 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
+- **377 tests, no network required** — 171 vader (Vim) + 206 plenary (Neovim), every API call mocked, running on every push in CI plus luacheck/vint linting.
 - **FIM prompting with redundancy detection** — the model knows what sits after the cursor, and anything it repeats (a closing bracket auto-pairs already inserted, a duplicated suffix) is detected structurally, shown struck-through, and discarded on accept — never silently.
 - **Fails soft** — malformed responses, safety-filtered candidates and billing errors surface as a single warning, never a stack trace mid-typing.
 
@@ -146,6 +146,10 @@ Opt in only after checking your model accepts it: with real calls on 2026-09-01,
 | `,pr` | Cycle to the next active model (only registered with 2+ active models) |
 | `,pm` | Pick a model from a floating menu (`j`/`k` to move, `<CR>` to select, `<Esc>`/`q` to close) — only registered with 2+ active models |
 | `:VimAiAutocompleteModel <name>` | Switch directly to a named model, with completion |
+
+## Manual checks and diagnostics
+
+Some behaviours only show in a real terminal (popups, key delivery, colours): [`docs/manual-checks.md`](docs/manual-checks.md) lists them with a "provoke / expect" for each, and [`test/manual/`](test/manual/) holds the drive files. When a suggestion silently never shows, set `g:vim_ai_autocomplete_debug_log` to a file path (Vim or Neovim): every response appends one line — generation, exit status, body size, whether it was still current, the first bytes — and a dropped answer says why.
 
 ## Architecture
 

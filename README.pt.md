@@ -15,7 +15,7 @@ Autocomplete de IA via ghost-text para Vim 9+ e Neovim, com round-robin plugáve
 ## Por baixo do capô
 
 - **Duas implementações nativas em paridade de comportamento** — Vimscript puro (textprops do Vim 9) e Lua puro (extmarks do Neovim), sem camada de compatibilidade, cada uma idiomática ao seu editor.
-- **366 testes, sem precisar de rede** — 167 vader (Vim) + 199 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
+- **377 testes, sem precisar de rede** — 171 vader (Vim) + 206 plenary (Neovim), toda chamada de API mockada, rodando a cada push no CI junto com lint (luacheck/vint).
 - **Prompt FIM com detecção de redundância** — o modelo sabe o que existe depois do cursor, e qualquer coisa que ele repita (um fecha-parênteses que o auto-pairs já inseriu, um sufixo duplicado) é detectada estruturalmente, exibida riscada, e descartada ao aceitar — nunca silenciosamente.
 - **Falha suave** — resposta malformada, candidate bloqueado por filtro e erro de billing viram um aviso único, nunca stack trace no meio da digitação.
 
@@ -146,6 +146,10 @@ Só ligue depois de conferir que o seu modelo aceita: em chamadas reais em 01/09
 | `,pr` | Cicla pro próximo modelo ativo (só registrado com 2+ modelos ativos) |
 | `,pm` | Escolhe um modelo num menu flutuante (`j`/`k` move, `<CR>` seleciona, `<Esc>`/`q` fecha) — só registrado com 2+ modelos ativos |
 | `:VimAiAutocompleteModel <nome>` | Troca direto pra um modelo pelo nome, com completion |
+
+## Checagens manuais e diagnóstico
+
+Alguns comportamentos só aparecem em terminal de verdade (popups, entrega de teclas, cores): [`docs/manual-checks.md`](docs/manual-checks.md) lista cada um com "provocar / esperar", e [`test/manual/`](test/manual/) guarda os arquivos de teste. Quando uma sugestão some em silêncio, aponte `g:vim_ai_autocomplete_debug_log` pra um arquivo (Vim ou Neovim): cada resposta vira uma linha — geração, status, tamanho do body, se ainda era a atual, os primeiros bytes — e resposta descartada diz o porquê.
 
 ## Arquitetura
 

@@ -1059,3 +1059,27 @@ Execute (UN-074 CompletionMenuVisible sees CoC's pum through coc#pum#visible()):
   Assert vim_ai_autocomplete#CompletionMenuVisible(), 'coc pum open: true'
   let g:un074_pum = 0
   Assert !vim_ai_autocomplete#CompletionMenuVisible(), 'coc pum closed: false'
+
+" UN-075: StripLeadingOverlap -- the model echoes the character(s) just before
+" the cursor (field report 2026-09-02, gemini: "(a, b):" right after "(",
+" ":\n    def ..." right after "class Stack:"). Strip the echo only when the
+" overlap is punctuation/brackets/whitespace; a word-character overlap is a
+" legitimate continuation. Subsumes StripLeadingIndentOverlap.
+After:
+  " nothing to clean up
+
+Execute (UN-075a strips a bracket the model repeated from just before the cursor):
+  AssertEqual ['a, b):', '    return a + b'], vim_ai_autocomplete#StripLeadingOverlap(['(a, b):', '    return a + b'], 'def add(')
+
+Execute (UN-075b strips an echoed colon, leaving an empty first line for the newline logic):
+  AssertEqual ['', '    def __init__(self):'], vim_ai_autocomplete#StripLeadingOverlap([':', '    def __init__(self):'], 'class Stack:')
+
+Execute (UN-075c multi-character punctuation echo, and word characters never stripped):
+  AssertEqual ['x)'], vim_ai_autocomplete#StripLeadingOverlap(['(x)'], 'foo((')
+  AssertEqual ['o = 1'], vim_ai_autocomplete#StripLeadingOverlap(['o = 1'], 'fo')
+
+Execute (UN-075d the old whitespace rule still holds, and no-overlap/empty are untouched):
+  AssertEqual ['if n <= 1:'], vim_ai_autocomplete#StripLeadingOverlap(['    if n <= 1:'], '    ')
+  AssertEqual ['a, b):'], vim_ai_autocomplete#StripLeadingOverlap(['a, b):'], 'def add(')
+  AssertEqual [], vim_ai_autocomplete#StripLeadingOverlap([], 'x(')
+  AssertEqual ['(x'], vim_ai_autocomplete#StripLeadingOverlap(['(x'], '')

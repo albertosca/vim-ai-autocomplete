@@ -78,7 +78,7 @@ local function process_candidate(lines, lnum, col, after)
   redundant_after = math.min(redundant_after, #current_line_remainder)
   -- before adjust_suggestion_lines: this one works on the raw model output,
   -- which is where the duplicated indentation lives.
-  lines = redundancy.strip_leading_indent_overlap(lines, before_cursor)
+  lines = redundancy.strip_leading_overlap(lines, before_cursor)
   lines = redundancy.adjust_suggestion_lines(lines, before_cursor, vim.bo.filetype, vim.fn.shiftwidth(), vim.bo.expandtab)
   -- last, with the lines already in the final shape that reaches the
   -- screen: drop from the suggestion the closing characters the buffer
@@ -87,12 +87,32 @@ local function process_candidate(lines, lnum, col, after)
   return redundancy.split_display_tail(lines, after, redundant_after)
 end
 
+-- Optional field diagnostics (mirror of the Vim side): when
+-- vim.g.vim_ai_autocomplete_debug_log names a file, every response appends
+-- one line there -- generation, exit status, body size, whether it was
+-- current, and the first bytes -- so a silently dropped answer can be traced
+-- without a debugger.
+local function debug_log(request_gen, status, body, note)
+  local path = vim.g.vim_ai_autocomplete_debug_log
+  if type(path) ~= 'string' or path == '' then
+    return
+  end
+  local head = (body or ''):sub(1, 160):gsub('\n', '^@')
+  local f = io.open(path, 'a')
+  if f then
+    f:write(string.format('%s gen=%d/%d status=%s len=%d %s :: %s\n', os.date('%H:%M:%S'), request_gen, gen,
+      tostring(status), #(body or ''), note, head))
+    f:close()
+  end
+end
+
 -- count_redundant_after_chars MUST run against the ORIGINAL suggestion,
 -- before any adjustment (same finding as on the Vim side: trimming the
 -- suggestion first corrupts the structural computation). Both sources of
 -- redundancy -- structural and textual overlap -- ADD UP into a single
 -- redundant_after.
 local function on_exit(request_gen, out_chunks, status, provider, parse_response, parse_alternatives, alternatives_wanted, bufnr, lnum, col, after)
+  debug_log(request_gen, status, table.concat(out_chunks, ''), request_gen == gen and 'current' or 'stale')
   if request_gen ~= gen then
     return
   end
@@ -101,10 +121,12 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
   ghost_text.clear_pending()
   -- drop it if the cursor already moved since the request was made.
   if vim.api.nvim_get_current_buf() ~= bufnr or vim.fn.line('.') ~= lnum or vim.fn.col('.') ~= col then
+    debug_log(request_gen, status, '', string.format('dropped: cursor moved (%d,%d -> %d,%d)', lnum, col, vim.fn.line('.'), vim.fn.col('.')))
     return
   end
   -- issue #2: the menu may have opened while the request was in flight.
   if M.completion_menu_visible() then
+    debug_log(request_gen, status, '', 'dropped: completion menu visible')
     return
   end
   local body = table.concat(out_chunks, '')

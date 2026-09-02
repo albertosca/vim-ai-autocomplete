@@ -166,6 +166,33 @@ function M.strip_leading_indent_overlap(lines, before_tail)
   return result
 end
 
+-- The model echoes the character(s) just before the cursor: field report
+-- 2026-09-02 (gemini) -- "(a, b):" right after "(" showed an extra pair on
+-- screen, ":\n    def ..." right after "class Stack:" put a second colon on
+-- the line below. Strips from the START of the suggestion the longest prefix
+-- that equals a suffix of before_tail, but only when that overlap is made of
+-- punctuation/brackets/whitespace: a word-character overlap ("fo" + "o = 1")
+-- is a legitimate continuation, never an echo. Nothing is deleted from the
+-- buffer, so nothing new has to be highlighted red -- the red stays exactly
+-- what accept removes. Subsumes strip_leading_indent_overlap (whitespace is
+-- one kind of non-word overlap).
+function M.strip_leading_overlap(lines, before_tail)
+  if #lines == 0 or type(before_tail) ~= 'string' or before_tail == '' then
+    return lines
+  end
+  local first = lines[1]
+  local max_len = math.min(#first, #before_tail)
+  for n = max_len, 1, -1 do
+    local head = first:sub(1, n)
+    if before_tail:sub(-n) == head and not head:find('[%w_]') then
+      local result = vim.deepcopy(lines)
+      result[1] = first:sub(n + 1)
+      return result
+    end
+  end
+  return lines
+end
+
 -- Some models treat the response as a literal continuation of bytes: when the
 -- context ends in ":" (a Python block opener), the first line of the
 -- suggestion comes with no line break and no indentation of its own -- same

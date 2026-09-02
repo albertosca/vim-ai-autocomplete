@@ -778,6 +778,33 @@ endfunction
 " would be a guess, and a wrong guess deletes the user's own characters. At
 " most len(before_tail) characters come off, so a deeper suggested indent
 " keeps the extra levels (user 2 + model 4 -> 2 remain, total 4).
+" The model echoes the character(s) just before the cursor: field report
+" 2026-09-02 (gemini) -- "(a, b):" right after "(" showed an extra pair on
+" screen, ":\n    def ..." right after "class Stack:" put a second colon on
+" the line below. Strips from the START of the suggestion the longest prefix
+" that equals a suffix of before_tail, but only when that overlap is made of
+" punctuation/brackets/whitespace: a word-character overlap ("fo" + "o = 1")
+" is a legitimate continuation, never an echo. Nothing is deleted from the
+" buffer, so nothing new has to be highlighted red. Subsumes
+" StripLeadingIndentOverlap (whitespace is one kind of non-word overlap).
+function! vim_ai_autocomplete#StripLeadingOverlap(lines, before_tail) abort
+  if empty(a:lines) || type(a:before_tail) != v:t_string || empty(a:before_tail)
+    return a:lines
+  endif
+  let first = a:lines[0]
+  let n = min([len(first), len(a:before_tail)])
+  while n >= 1
+    let head = strpart(first, 0, n)
+    if strpart(a:before_tail, len(a:before_tail) - n) ==# head && head !~# '[[:alnum:]_]'
+      let result = copy(a:lines)
+      let result[0] = strpart(first, n)
+      return result
+    endif
+    let n -= 1
+  endwhile
+  return a:lines
+endfunction
+
 function! vim_ai_autocomplete#StripLeadingIndentOverlap(lines, before_tail) abort
   if empty(a:lines) || type(a:before_tail) != v:t_string || empty(a:before_tail)
         \ || a:before_tail =~# '\S'
@@ -898,6 +925,7 @@ function! vim_ai_autocomplete#ShowSuggestion(lines, ...) abort
   let s:suggestion_lnum = line('.')
   let s:suggestion_col = col('.')
   let s:suggestion_redundant_after = redundant
+  call s:DebugLog(s:gen, 0, '', printf('shown at (%d,%d) mode=%s lines=%d', s:suggestion_lnum, s:suggestion_col, mode(1), len(a:lines)))
 endfunction
 
 function! vim_ai_autocomplete#ClearSuggestion() abort
@@ -1239,6 +1267,7 @@ function! vim_ai_autocomplete#Trigger() abort
   " this is about correctness (not letting an invalid suggestion be
   " accepted), not about asking for a new suggestion.
   if vim_ai_autocomplete#IsVisible() && (line('.') != s:suggestion_lnum || col('.') != s:suggestion_col)
+    call s:DebugLog(s:gen, 0, '', printf('Trigger cleared: stored (%d,%d) now (%d,%d) mode=%s', s:suggestion_lnum, s:suggestion_col, line('.'), col('.'), mode(1)))
     call vim_ai_autocomplete#ClearSuggestion()
   endif
   if !get(g:, 'vim_ai_autocomplete_auto_trigger', 1)
@@ -1257,6 +1286,7 @@ endfunction
 
 function! vim_ai_autocomplete#OnTimer(timer_id) abort
   let s:timer_id = -1
+  call s:DebugLog(s:gen, 0, '', 'OnTimer: clearing (visible=' . vim_ai_autocomplete#IsVisible() . ') and re-requesting')
   call vim_ai_autocomplete#ClearSuggestion()
   if mode() !=# 'i'
     return
@@ -1554,7 +1584,7 @@ function! s:ProcessCandidate(lines, lnum, col, after) abort
   let redundant_after = min([redundant_after, len(current_line_remainder)])
   " before AdjustSuggestionLines: this one works on the raw model output,
   " which is where the duplicated indentation lives.
-  let lines = vim_ai_autocomplete#StripLeadingIndentOverlap(lines, before_cursor)
+  let lines = vim_ai_autocomplete#StripLeadingOverlap(lines, before_cursor)
   let lines = vim_ai_autocomplete#AdjustSuggestionLines(lines, before_cursor, &filetype, shiftwidth(), &expandtab)
   " last, with the lines already in the final shape that reaches the screen:
   " drop from the suggestion the closing characters the buffer already has,
@@ -1562,7 +1592,21 @@ function! s:ProcessCandidate(lines, lnum, col, after) abort
   return vim_ai_autocomplete#SplitDisplayTail(lines, a:after, redundant_after)
 endfunction
 
+" Optional field diagnostics: when g:vim_ai_autocomplete_debug_log names a
+" file, every response appends one line there -- generation, exit status,
+" body size, whether it was current, and the first bytes -- so a silently
+" dropped answer can be traced without a debugger (added 2026-09-02 for a
+" Gemini answer that vanished between the API and the screen).
+function! s:DebugLog(gen, status, body, note) abort
+  let path = get(g:, 'vim_ai_autocomplete_debug_log', '')
+  if empty(path)
+    return
+  endif
+  call writefile([printf('%s gen=%d/%d status=%d len=%d %s :: %s', strftime('%H:%M:%S'), a:gen, s:gen, a:status, len(a:body), a:note, strtrans(a:body[:160]))], path, 'a')
+endfunction
+
 function! s:OnExit(gen, chunks, status, provider, parse_response, parse_alternatives, wanted, bufnr, lnum, col, after) abort
+  call s:DebugLog(a:gen, a:status, join(a:chunks, ''), a:gen == s:gen ? 'current' : 'stale')
   if a:gen != s:gen
     return
   endif
@@ -1574,10 +1618,12 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, parse_alternat
   " error path as well, otherwise an error from a stale request could surface
   " out of context after the user has already moved on.
   if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
+    call s:DebugLog(a:gen, a:status, '', printf('dropped: cursor moved (%d,%d -> %d,%d)', a:lnum, a:col, line('.'), col('.')))
     return
   endif
   " issue #2: the menu may have opened while the request was in flight.
   if vim_ai_autocomplete#CompletionMenuVisible()
+    call s:DebugLog(a:gen, a:status, '', 'dropped: completion menu visible')
     return
   endif
   let body = join(a:chunks, '')
