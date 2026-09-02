@@ -1034,3 +1034,28 @@ Execute (UN-073 the test vimrc keeps native packages (and copilot.vim) out):
   AssertEqual $VIMRUNTIME, &packpath, 'packpath must be Vim''s own runtime only under test/minimal_vimrc.vim'
   AssertEqual 1, get(g:, 'loaded_copilot', 0), 'g:loaded_copilot must be set as a belt to that brace'
   Assert execute('scriptnames') !~? 'copilot', 'no copilot script may be sourced in the test Vim'
+
+" UN-074: completion menu awareness (issue #2). CoC draws its own popup, not
+" the native pum, so pumvisible() alone is blind to it -- both are consulted.
+" The predicate is what Trigger/OnTimer and s:OnExit ask before requesting
+" and before rendering.
+After:
+  silent! delfunction coc#pum#visible
+  if exists('g:un074_dir')
+    let &runtimepath = substitute(&runtimepath, ',' . escape(g:un074_dir, '.\/'), '', '')
+    call delete(g:un074_dir, 'rf')
+    unlet g:un074_dir
+  endif
+
+Execute (UN-074 CompletionMenuVisible sees CoC's pum through coc#pum#visible()):
+  Assert !vim_ai_autocomplete#CompletionMenuVisible(), 'nothing open: false'
+  " an autoload-named function can only be defined from its own autoload file
+  " (E746), so the CoC stub is a real autoload script on a temporary rtp
+  let g:un074_dir = tempname()
+  call mkdir(g:un074_dir . '/autoload/coc', 'p')
+  call writefile(['function! coc#pum#visible() abort', '  return g:un074_pum', 'endfunction'], g:un074_dir . '/autoload/coc/pum.vim')
+  let &runtimepath .= ',' . g:un074_dir
+  let g:un074_pum = 1
+  Assert vim_ai_autocomplete#CompletionMenuVisible(), 'coc pum open: true'
+  let g:un074_pum = 0
+  Assert !vim_ai_autocomplete#CompletionMenuVisible(), 'coc pum closed: false'

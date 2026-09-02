@@ -38,6 +38,26 @@ local function pending_delay_ms()
   return 400
 end
 
+-- issue #2: is a completion menu on screen? Two suggestion UIs at the same
+-- cursor position compete, and the menu wins: nothing is requested while it
+-- is open, and an answer that lands while it is open is dropped. The native
+-- popup plus the Lua menus that draw their own windows (blink.cmp, nvim-cmp)
+-- -- each consulted only if present.
+function M.completion_menu_visible()
+  if vim.fn.pumvisible() == 1 then
+    return true
+  end
+  local ok, blink = pcall(require, 'blink.cmp')
+  if ok and type(blink) == 'table' and type(blink.is_visible) == 'function' and blink.is_visible() then
+    return true
+  end
+  local ok2, cmp = pcall(require, 'cmp')
+  if ok2 and type(cmp) == 'table' and type(cmp.visible) == 'function' and cmp.visible() then
+    return true
+  end
+  return false
+end
+
 -- everything the lazy fetch (the anthropic side of the hybrid) needs to
 -- rebuild the SAME request later, captured at trigger time.
 local last_trigger = nil
@@ -83,6 +103,10 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
   if vim.api.nvim_get_current_buf() ~= bufnr or vim.fn.line('.') ~= lnum or vim.fn.col('.') ~= col then
     return
   end
+  -- issue #2: the menu may have opened while the request was in flight.
+  if M.completion_menu_visible() then
+    return
+  end
   local body = table.concat(out_chunks, '')
   if alternatives_wanted then
     local entries = {}
@@ -112,6 +136,10 @@ local function on_exit(request_gen, out_chunks, status, provider, parse_response
 end
 
 function M.request_completion()
+  -- issue #2: a completion menu is open -- let it win, ask for nothing.
+  if M.completion_menu_visible() then
+    return
+  end
   local all_models = vim.g.vim_ai_autocomplete_models or models.default_models()
   local active = models.active_models()
   local default_name, level = models.resolve_default_model(all_models, active)
@@ -242,7 +270,7 @@ local function fetch_lazy_alternative()
         return
       end
       ghost_text.clear_pending()
-      if not ghost_text.is_visible() then
+      if not ghost_text.is_visible() or M.completion_menu_visible() then
         return
       end
       if vim.api.nvim_get_current_buf() ~= t.bufnr or vim.fn.line('.') ~= t.lnum or vim.fn.col('.') ~= t.col then

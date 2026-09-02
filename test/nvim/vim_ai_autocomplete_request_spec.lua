@@ -295,3 +295,63 @@ describe("vim-ai-autocomplete.request in-flight marker (issue #4, vim.system moc
     assert.are.same({}, marks())
   end)
 end)
+
+describe("vim-ai-autocomplete.request completion menu awareness (issue #2)", function()
+  local buf, original_system, original_pumvisible
+
+  before_each(function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    ghost_text.clear_pending()
+    ghost_text.clear_suggestion()
+    vim.g.vim_ai_autocomplete_models = nil
+    vim.g.vim_ai_autocomplete_provider = nil
+    vim.fn.setenv('GEMINI_API_KEY', 'test-key')
+    vim.fn.setenv('ANTHROPIC_API_KEY', vim.NIL)
+    package.loaded['vim-ai-autocomplete.request'] = nil
+    original_system = vim.system
+    original_pumvisible = vim.fn.pumvisible
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'def sum(' })
+    vim.api.nvim_win_set_cursor(0, { 1, 8 })
+  end)
+
+  after_each(function()
+    vim.system = original_system
+    vim.fn.pumvisible = original_pumvisible
+    ghost_text.clear_pending()
+    ghost_text.clear_suggestion()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  local body = vim.json.encode({ candidates = { { content = { parts = { { text = 'a, b)' } } } } } })
+
+  it("completion_menu_visible follows the native popup", function()
+    local request = require('vim-ai-autocomplete.request')
+    vim.fn.pumvisible = function() return 0 end
+    assert.is_false(request.completion_menu_visible())
+    vim.fn.pumvisible = function() return 1 end
+    assert.is_true(request.completion_menu_visible())
+  end)
+
+  it("a menu open when the request would fire: no request at all", function()
+    local calls = 0
+    vim.system = function(_, _, on_exit) calls = calls + 1; on_exit({ code = 0, stdout = body }) end
+    vim.fn.pumvisible = function() return 1 end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.wait(100, function() return calls > 0 end, 10)
+    assert.are.equal(0, calls)
+    assert.is_false(ghost_text.is_visible())
+  end)
+
+  it("a menu that opened while the request was in flight: the answer is dropped, not rendered", function()
+    local finish
+    vim.system = function(_, _, on_exit) finish = function() on_exit({ code = 0, stdout = body }) end end
+    vim.fn.pumvisible = function() return 0 end
+    require('vim-ai-autocomplete.request').request_completion()
+    vim.fn.pumvisible = function() return 1 end
+    finish()
+    vim.wait(100, function() return ghost_text.is_visible() end, 10)
+    assert.is_false(ghost_text.is_visible())
+    assert.is_false(ghost_text.is_pending(), 'the in-flight marker is cleared too')
+  end)
+end)

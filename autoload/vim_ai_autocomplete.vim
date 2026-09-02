@@ -1264,7 +1264,31 @@ function! vim_ai_autocomplete#OnTimer(timer_id) abort
   call vim_ai_autocomplete#RequestCompletion()
 endfunction
 
+" issue #2: is a completion menu on screen? Two suggestion UIs at the same
+" cursor position compete, and the menu wins: nothing is requested while it
+" is open, and an answer that lands while it is open is dropped. CoC draws
+" its own popup (not the native pum), so coc#pum#visible() is consulted as
+" well whenever it exists.
+function! vim_ai_autocomplete#CompletionMenuVisible() abort
+  if pumvisible()
+    return 1
+  endif
+  " a guarded CALL, not exists('*coc#pum#visible'): exists() never autoloads,
+  " so it stays 0 until something else has called the function -- which would
+  " leave this blind until the user's first <Tab>. Calling it autoloads the
+  " script; E117 means there is no CoC at all.
+  try
+    return coc#pum#visible() ? 1 : 0
+  catch /E117/
+    return 0
+  endtry
+endfunction
+
 function! vim_ai_autocomplete#RequestCompletion() abort
+  " issue #2: a completion menu is open -- let it win, ask for nothing.
+  if vim_ai_autocomplete#CompletionMenuVisible()
+    return
+  endif
   let all_models = get(g:, 'vim_ai_autocomplete_models', vim_ai_autocomplete#DefaultModels())
   let active = vim_ai_autocomplete#ActiveModels()
   let [default_name, level, _] = vim_ai_autocomplete#ResolveDefaultModel(all_models, active)
@@ -1407,7 +1431,7 @@ function! s:OnLazyExit(t, chunks, status) abort
     return
   endif
   call vim_ai_autocomplete#ClearPending()
-  if !vim_ai_autocomplete#IsVisible()
+  if !vim_ai_autocomplete#IsVisible() || vim_ai_autocomplete#CompletionMenuVisible()
     return
   endif
   if bufnr('%') != a:t.bufnr || line('.') != a:t.lnum || col('.') != a:t.col
@@ -1525,6 +1549,10 @@ function! s:OnExit(gen, chunks, status, provider, parse_response, parse_alternat
   " error path as well, otherwise an error from a stale request could surface
   " out of context after the user has already moved on.
   if bufnr('%') != a:bufnr || line('.') != a:lnum || col('.') != a:col
+    return
+  endif
+  " issue #2: the menu may have opened while the request was in flight.
+  if vim_ai_autocomplete#CompletionMenuVisible()
     return
   endif
   let body = join(a:chunks, '')
